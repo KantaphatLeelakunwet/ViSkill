@@ -30,7 +30,7 @@ save_buffer: False
 
 use_wb: True
 project_name: viskill
-entity_name: thuang22
+entity_name: viskill # thuang22
 
 mpi: {rank: null, is_chef: null, num_workers: null}
 # Working space
