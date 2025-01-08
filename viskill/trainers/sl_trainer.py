@@ -53,9 +53,12 @@ class SkillLearningTrainer(BaseTrainer):
         if self.is_chef:
             exp_name = f"SL_{self.cfg.task}_{self.cfg.subtask}_{self.cfg.agent.name}_seed{self.cfg.seed}"
             if self.cfg.postfix is not None:
-                exp_name =  exp_name + '_' + self.cfg.postfix 
-            self.wb = WandBLogger(exp_name=exp_name, project_name=self.cfg.project_name, entity=self.cfg.entity_name, \
+                exp_name =  exp_name + '_' + self.cfg.postfix
+            if self.cfg.use_wb:
+                self.wb = WandBLogger(exp_name=exp_name, project_name=self.cfg.project_name, entity=self.cfg.entity_name, \
                     path=self.work_dir, conf=self.cfg)
+            else:
+                self.wb = None
             self.logger = Logger(self.work_dir)
             self.termlog = logger
             save_cmd(self.work_dir)
@@ -165,7 +168,8 @@ class SkillLearningTrainer(BaseTrainer):
                 log('episode', self.global_episode)
                 log('step', self.global_step)
                 log('ETA', togo_train_time)
-            self.wb.log_outputs(metrics, None, log_images=False, step=self.global_step, is_train=True)
+            if self.cfg.use_wb:
+                self.wb.log_outputs(metrics, None, log_images=False, step=self.global_step, is_train=True)
             
     def eval(self):
         '''Eval agent.'''
@@ -180,7 +184,8 @@ class SkillLearningTrainer(BaseTrainer):
                 rollout_status[key] = value.mean()
 
         if self.is_chef:
-            self.wb.log_outputs(rollout_status, eval_rollout_storage, log_images=True, step=self.global_step)
+            if self.cfg.use_wb:
+                self.wb.log_outputs(rollout_status, eval_rollout_storage, log_images=True, step=self.global_step)
             with self.logger.log_and_dump_ctx(self.global_step, ty='eval') as log:
                 log('episode_sr', rollout_status.avg_success_rate)
                 log('episode_reward', rollout_status.avg_reward)
