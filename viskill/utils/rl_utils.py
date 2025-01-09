@@ -1,4 +1,5 @@
 import os
+import socket
 
 import numpy as np
 
@@ -101,7 +102,9 @@ class ReplayCacheGT(ReplayCache):
     
 def init_demo_buffer(cfg, buffer, agent, subtask=None, update_normalizer=True):
     '''Load demonstrations into buffer and initilaize normalizer'''
-    demo_path = os.path.join(os.getcwd(),'SurRoL/surrol/data/demo')
+    current_node = socket.gethostname()
+    demo_path = f'/bd_{current_node}/users/kleelakunwet/demo'
+    # demo_path = os.path.join(os.getcwd(),'SurRoL/surrol/data/demo')
     file_name = "data_"
     file_name += cfg.task
     file_name += "_" + 'random'
@@ -134,7 +137,9 @@ def init_demo_buffer(cfg, buffer, agent, subtask=None, update_normalizer=True):
 def init_sc_buffer(cfg, buffer, agent, env_params):
     '''Load demonstrations into buffer and initilaize normalizer'''
     for subtask in env_params.subtasks:
-        demo_path = os.path.join(os.getcwd(),'SurRoL/surrol/data/demo')
+        current_node = socket.gethostname()
+        demo_path = f'/bd_{current_node}/users/kleelakunwet/demo'
+        # demo_path = os.path.join(os.getcwd(),'SurRoL/surrol/data/demo')
         file_name = "data_"
         file_name += cfg.task
         file_name += "_" + 'random'
