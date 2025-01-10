@@ -13,7 +13,6 @@ parser.add_argument('--method', type=str,
                     choices=['dopri5', 'adams'], default='dopri5')
 parser.add_argument('--task', type=str, choices=tasks, default='BiPegBoard-v0')
 parser.add_argument('--subtask', type=str, choices=subtasks, default='grasp')
-parser.add_argument('--batch_size', type=int, default=20)
 parser.add_argument('--gpu', type=int, default=0)
 parser.add_argument('--use_dcbf', action='store_true')
 parser.add_argument('--train_counter', type=int, default=0)
@@ -55,7 +54,7 @@ u_dim = u_train.shape[-1]
 fc_param = [x_dim, 64, x_dim + x_dim * u_dim]
 
 # Initialize neural ODE
-func = CBF(fc_param, args.batch_size).to(device)
+func = CBF(fc_param).to(device)
 func.load_state_dict(torch.load(
     f"saved_model/{args.task}/{args.subtask}/{args.train_counter}/CBF10.pth"))
 func.eval()

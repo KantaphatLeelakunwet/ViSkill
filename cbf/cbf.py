@@ -17,13 +17,12 @@ def cvx_solver(P, q, G, h):
 
 
 class CBF(nn.Module):
-    def __init__(self, fc_param, batch_size):
+    def __init__(self, fc_param):
         super(CBF, self).__init__()
 
         self.net = self.build_mlp(fc_param)
         self.x_dim = fc_param[0]
         self.u_dim = (fc_param[-1] - fc_param[0]) // fc_param[0]
-        self.batch_size = batch_size
 
         # Initializing weights
         for m in self.net.modules():
@@ -42,7 +41,7 @@ class CBF(nn.Module):
             net_out = self.net(x)  # [20, 1, 42]
             fx = net_out[:, :, :self.x_dim]
             gx = net_out[:, :, self.x_dim:]
-            gx = torch.reshape(gx, (self.batch_size, self.u_dim, self.x_dim))
+            gx = torch.reshape(gx, (x.shape[0], self.u_dim, self.x_dim))
             return fx + self.u @ gx  # [20, 1, 6]
         else:
             net_out = self.net(x)  # [1, 42]

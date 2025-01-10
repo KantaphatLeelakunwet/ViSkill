@@ -36,7 +36,7 @@ acs = np.load(f'../data/{args.task}/{args.subtask}/acs_pos.npy')
 SCALING = 5.0 if args.task in tasks else 1.0
 acs = acs * 0.01 * SCALING
 
-num_episode, data_size, _ = acs.shape()
+num_episode, data_size, _ = acs.shape
 
 obs = torch.tensor(obs).float()
 acs = torch.tensor(acs).float()
@@ -138,7 +138,7 @@ if __name__ == '__main__':
     fc_param = [x_dim, 64, x_dim + x_dim * u_dim]
 
     # Initialize neural ODE
-    func = CBF(fc_param, args.batch_size).to(device)
+    func = CBF(fc_param).to(device)
     optimizer = optim.RMSprop(func.parameters(), lr=1e-3)
 
     test_loss = torch.tensor([0]).to(device)
