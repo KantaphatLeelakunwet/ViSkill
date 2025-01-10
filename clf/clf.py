@@ -38,11 +38,13 @@ class CLF(nn.Module):
 
     def forward(self, t, x):
         net_out = self.net(x)
-        fx = net_out[:, :self.x_dim]
-        gx = net_out[:, self.x_dim:]
         if self.training:
+            fx = net_out[:, :, :self.x_dim]
+            gx = net_out[:, :, self.x_dim:]
             gx = torch.reshape(gx, (x.shape[0], self.u_dim, self.x_dim))
         else:
+            fx = net_out[:, :self.x_dim]
+            gx = net_out[:, self.x_dim:]
             gx = torch.reshape(gx, (self.u_dim, self.x_dim))
         return fx + self.u @ gx
 
