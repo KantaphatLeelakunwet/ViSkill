@@ -133,3 +133,10 @@ run/
 
 # Training output
 exp/
+
+# Datasets
+data/
+!data/data_processing.py
+
+# CBF/CLF trained weights
+saved_model/
