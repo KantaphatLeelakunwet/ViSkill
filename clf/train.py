@@ -36,23 +36,25 @@ acs = np.load(f'../data/{args.task}/{args.subtask}/acs_orn.npy')
 acs *= np.deg2rad(30)
 if args.task == 'BiPegBoard-v0':
     acs[:, :, 0] *= np.deg2rad(15)
-    
+
 num_episode, data_size, _ = acs.shape
 
 obs = torch.tensor(obs).float()
 acs = torch.tensor(acs).float()
 
 # Training data
-x_train = obs.unsqueeze(2).to(device) 
-u_train = acs.unsqueeze(2).to(device) 
+x_train = obs.unsqueeze(2).to(device)
+u_train = acs.unsqueeze(2).to(device)
 
 # Testing data
-x_test = x_train[-1, :, :, :] 
-u_test = u_train[-1, :, :, :]  
+x_test = x_train[-1, :, :, :]
+u_test = u_train[-1, :, :, :]
 
 # Initial condition for testing
-x_test0 = x_train[-1, 0, :, :] 
-u_test0 = u_train[-1, 0, :, :] 
+x_test0 = x_train[-1, 0, :, :]
+u_test0 = u_train[-1, 0, :, :]
+
+t = torch.arange(0., 0.1 * data_size, 0.1).to(device)
 
 
 def get_batch(bitr):  # get training data from bitr-th trajectory
@@ -119,7 +121,7 @@ def makedirs(task: str, subtask: str, train_counter: int):
         print(f"'{saved_dir}' already exists and is not empty.")
         print("If you want to retrain, please increment 'train_counter'")
         exit(1)
-        
+
     return saved_dir
 
 
@@ -150,7 +152,7 @@ if __name__ == '__main__':
             batch_u0, batch_x0, batch_t, batch_u, batch_x = get_batch(traj)
 
             # Setup input for network
-            x0 = batch_x0           
+            x0 = batch_x0
             pred_x = x0.unsqueeze(0)
 
             # Loop over each time step in a time batch
