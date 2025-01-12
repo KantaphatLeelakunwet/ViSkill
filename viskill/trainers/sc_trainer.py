@@ -226,4 +226,5 @@ class SkillChainingTrainer(SkillLearningTrainer):
                 log('episode', self.global_episode)
                 log('step', self.global_step)
 
-        del eval_rollout_storage
+        self.termlog.info(f'Successful rate: {rollout_status.avg_success_rate}')
+        del eval_rollout_storage        
