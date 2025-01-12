@@ -20,9 +20,12 @@ parser.add_argument('--task', type=str, choices=tasks, default='BiPegBoard-v0')
 parser.add_argument('--subtask', type=str, choices=subtasks, default='grasp')
 parser.add_argument('--batch_time', type=int, default=10)
 parser.add_argument('--batch_size', type=int, default=20)
-parser.add_argument('--niters', type=int, default=200)
+parser.add_argument('--niters', type=int, default=400)
 parser.add_argument('--test_freq', type=int, default=20)
 parser.add_argument('--gpu', type=int, default=0)
+parser.add_argument('--resume', type=str, default=None,
+                    help='Path to pretrained weights')
+parser.add_argument('--train_counter', type=int, default=0)
 args = parser.parse_args()
 
 # Setting up device used for training
@@ -117,7 +120,7 @@ def makedirs(task: str, subtask: str, train_counter: int):
         os.makedirs(saved_dir)
     elif not os.listdir(saved_dir):
         pass
-    else:
+    elif not args.resume:
         print(f"'{saved_dir}' already exists and is not empty.")
         print("If you want to retrain, please increment 'train_counter'")
         exit(1)
@@ -127,7 +130,7 @@ def makedirs(task: str, subtask: str, train_counter: int):
 
 if __name__ == '__main__':
     test_count = 0
-    train_counter = 0
+    train_counter = args.train_counter
 
     saved_folder = makedirs(args.task, args.subtask, train_counter)
 
@@ -139,6 +142,21 @@ if __name__ == '__main__':
     # Initialize neural ODE
     func = CLF(fc_param).to(device)
     optimizer = optim.RMSprop(func.parameters(), lr=0.75e-3)
+
+    # Load pretrained weights if resuming
+    if args.resume:
+        if not os.path.exists(args.resume):
+            print(f"{args.resume} does not exist.")
+            print(f"It should be in {saved_folder}/CLFxx.pth")
+            exit(1)
+
+        func.load_state_dict(torch.load(args.resume))
+        print(f"Loaded pretrained weights from {args.resume}")
+        filename = os.path.basename(args.resume)
+        # Set train_counter based on the existing saved models
+        train_counter = int(os.path.basename(os.path.dirname(args.resume)))
+        # Set test_count
+        test_count = int(''.join(filter(str.isdigit, filename.split('.')[0])))
 
     test_loss = torch.tensor([0]).to(device)
     tt = torch.tensor([0.0, 0.1]).to(device)
