@@ -140,3 +140,7 @@ data/
 
 # CBF/CLF trained weights
 saved_model/
+
+# Picture/Video
+saved_eval_pic/
+video/

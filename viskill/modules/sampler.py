@@ -1,5 +1,7 @@
 from ..utils.general_utils import AttrDict, listdict2dictlist
 from ..utils.rl_utils import ReplayCache, ReplayCacheGT
+import PIL.Image as Image
+import os
 
 
 class Sampler:
@@ -30,6 +32,10 @@ class Sampler:
                 break
             if render:
                 render_obs = self._env.render('rgb_array')
+                img = Image.fromarray(render_obs)
+                if not os.path.exists(f'saved_eval_pic/'):
+                    os.makedirs(f'saved_eval_pic/')
+                img.save(f'saved_eval_pic/image_{self._episode_step:03}.png')
             obs, reward, done, info = self._env.step(action)
             episode.append(AttrDict(
                 reward=reward,
@@ -81,6 +87,10 @@ class HierarchicalSampler(Sampler):
 
             if render:
                 render_obs = self._env.render('rgb_array')
+                img = Image.fromarray(render_obs)
+                if not os.path.exists(f'saved_eval_pic/'):
+                    os.makedirs(f'saved_eval_pic/')
+                img.save(f'saved_eval_pic/image_{self._episode_step:03}.png')
             if agent_output.is_sc_step:
                 self.last_sc_action = agent_output.sc_action
                 self.reward_since_last_sc = 0
