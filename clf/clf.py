@@ -49,47 +49,23 @@ class CLF(nn.Module):
         return fx + self.u @ gx
 
     def dCLF(self, robot, desired, u, f, g):
-        assert robot.shape == (1, 6)
-        assert desired.shape == (1, 6)
-        assert u.shape == (1, 2)
-        assert f.shape == (1, 6)
-        assert g.shape == (1, 12)
-
-        # # Assign robot orientation
-        # x0, x1, x2 = robot[0, 0], robot[0, 1], robot[0, 2]
-        # x3, x4, x5 = robot[0, 3], robot[0, 4], robot[0, 5]
-
-        # # Expert Demonstration's Orientation
-        # d0, d1, d2 = desired[0, 0], desired[0, 1], desired[0, 2]
-        # d3, d4, d5 = desired[0, 3], desired[0, 4], desired[0, 5]
+        # assert robot.shape == (1, 3)
+        # assert desired.shape == (1, 3)
+        # assert u.shape == (1, 1)
+        # assert f.shape == (1, 3)
+        # assert g.shape == (1, 3)
 
         # Compute CLF
         V = ((robot - desired) ** 2).sum()
-        # V = (x0 - d0) ** 2 + (x1 - d1) ** 2 + (x2 - d2) ** 2 + \
-        #     (x3 - d3) ** 2 + (x4 - d4) ** 2 + (x5 - d5) ** 2
 
+        # Partial derivative
         dV = 2 * torch.tensor([[
             robot[0, i] - desired[0, i] for i in range(robot.shape[1])]]).float().to(self.device)
 
         dotV_f = dV @ f.T  # [1, 1]
 
-        # dotV_f = 2 * (x0 - d0) * f[0, 0] \
-        #     + 2 * (x1 - d1) * f[0, 1] \
-        #     + 2 * (x2 - d2) * f[0, 2] \
-        #     + 2 * (x3 - d3) * f[0, 3] \
-        #     + 2 * (x4 - d4) * f[0, 4] \
-        #     + 2 * (x5 - d5) * f[0, 5]
-
         g = torch.reshape(g, (self.u_dim, self.x_dim))
         dotV_g = dV @ g.T  # [1, 2]
-
-        # dotV_g = 2 * (x0 - d0) * g[0, 0].reshape(1, 1) \
-        #     + 2 * (x1 - d1) * g[0, 1].reshape(1, 1) \
-        #     + 2 * (x2 - d2) * g[0, 2].reshape(1, 1) \
-        #     + 2 * (x3 - d3) * g[0, 1].reshape(1, 1) \
-        #     + 2 * (x4 - d4) * g[0, 2].reshape(1, 1) \
-        #     + 2 * (x5 - d5) * g[0, 1].reshape(1, 1)
-        # dotV_g: [1, 2]
 
         # dotV + epsilon * V <= 0
         # (dotV_f + dotV_g * u) + epsilon * V <= 0

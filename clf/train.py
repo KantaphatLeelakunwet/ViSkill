@@ -20,12 +20,13 @@ parser.add_argument('--task', type=str, choices=tasks, default='BiPegBoard-v0')
 parser.add_argument('--subtask', type=str, choices=subtasks, default='grasp')
 parser.add_argument('--batch_time', type=int, default=10)
 parser.add_argument('--batch_size', type=int, default=20)
-parser.add_argument('--niters', type=int, default=400)
+parser.add_argument('--niters', type=int, default=200)
 parser.add_argument('--test_freq', type=int, default=20)
 parser.add_argument('--gpu', type=int, default=0)
 parser.add_argument('--resume', type=str, default=None,
                     help='Path to pretrained weights')
 parser.add_argument('--train_counter', type=int, default=0)
+parser.add_argument('--psm', type=int, choices=[0, 1, 2], default=1)
 args = parser.parse_args()
 
 # Setting up device used for training
@@ -36,11 +37,20 @@ device = torch.device('cuda:' + str(args.gpu)
 # Load dataset
 obs = np.load(f'../data/{args.task}/{args.subtask}/obs_orn.npy')
 acs = np.load(f'../data/{args.task}/{args.subtask}/acs_orn.npy')
-acs *= np.deg2rad(30)
+num_episode, data_size, _ = acs.shape
+
 if args.task == 'BiPegBoard-v0':
     acs[:, :, 0] *= np.deg2rad(15)
-
-num_episode, data_size, _ = acs.shape
+    acs[:, :, 1] *= np.deg2rad(30)
+else:
+    acs *= np.deg2rad(30)
+    
+if args.psm == 1:
+    obs = obs[:, :, :3]
+    acs = acs[:, :, 0].reshape(num_episode, data_size, 1)
+elif args.psm == 2:
+    obs = obs[:, :, 3:]
+    acs = acs[:, :, 1].reshape(num_episode, data_size, 1)
 
 obs = torch.tensor(obs).float()
 acs = torch.tensor(acs).float()
@@ -133,6 +143,7 @@ if __name__ == '__main__':
     train_counter = args.train_counter
 
     saved_folder = makedirs(args.task, args.subtask, train_counter)
+    print(f"Weights will be saved at {saved_folder}")
 
     # Set up the dimension of the network
     x_dim = x_train.shape[-1]
@@ -141,7 +152,7 @@ if __name__ == '__main__':
 
     # Initialize neural ODE
     func = CLF(fc_param).to(device)
-    optimizer = optim.RMSprop(func.parameters(), lr=0.75e-3)
+    optimizer = optim.RMSprop(func.parameters(), lr=1e-3)
 
     # Load pretrained weights if resuming
     if args.resume:
@@ -190,6 +201,32 @@ if __name__ == '__main__':
 
                 # Update input to the network
                 x0 = pred[-1, :, :, :]
+
+            # NOTE: Orientation lies between [-pi, pi]
+            #       Let's say changing from 0.99 pi to -0.99 pi 
+            #       is actually 0.02 pi of difference. However, if you
+            #       directly compute the difference, it turns out to be 1.98 pi.
+            #       Hence, we should do some modification to target value (-0.99 in this case)
+            #       such that we can get the difference of 0.02 pi.
+            # NOTE: Once a value is changed, every value after that must also be changed.
+            
+            while True:
+                diff = batch_x[:-1, :, :, :] - batch_x[1:, :, :, :]
+                
+                mask_greater = diff > np.pi
+                if mask_greater.any():
+                    batch_x[1:, :, :, :] = torch.where(mask_greater, 
+                                                batch_x[1:, :, :, :] + 2 * np.pi, 
+                                                batch_x[1:, :, :, :])
+                
+                mask_lesser = diff < -np.pi
+                if mask_lesser.any():
+                    batch_x[1:, :, :, :] = torch.where(mask_lesser, 
+                                                batch_x[1:, :, :, :] - 2 * np.pi, 
+                                                batch_x[1:, :, :, :])
+            
+                if mask_greater.any() == False and mask_lesser.any() == False:
+                    break
 
             # Compute loss [10, 20, 1, 6]
             loss = torch.mean(torch.abs(pred_x - batch_x))
