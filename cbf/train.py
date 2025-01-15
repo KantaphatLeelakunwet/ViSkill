@@ -23,6 +23,9 @@ parser.add_argument('--batch_size', type=int, default=20)
 parser.add_argument('--niters', type=int, default=200)  # 2000
 parser.add_argument('--test_freq', type=int, default=20)  # 2 20
 parser.add_argument('--gpu', type=int, default=0)
+parser.add_argument('--resume', type=str, default=None,
+                    help='Path to pretrained weights')
+parser.add_argument('--train_counter', type=int, default=0)
 args = parser.parse_args()
 
 # Setting up device used for training
@@ -121,16 +124,16 @@ def makedirs(task: str, subtask: str, train_counter: int):
         print(f"'{saved_dir}' already exists and is not empty.")
         print("If you want to retrain, please increment 'train_counter'")
         exit(1)
-        
+
     return saved_dir
 
 
 if __name__ == '__main__':
     test_count = 0
-    train_counter = 0
 
     # Create directory to store trained weights
-    saved_folder = makedirs(args.task, args.subtask, train_counter)
+    saved_folder = makedirs(args.task, args.subtask, args.train_counter)
+    print(f"Weights will be saved at {saved_folder}")
 
     # Set up the dimension of the network
     x_dim = x_train.shape[-1]
@@ -140,6 +143,22 @@ if __name__ == '__main__':
     # Initialize neural ODE
     func = CBF(fc_param).to(device)
     optimizer = optim.RMSprop(func.parameters(), lr=1e-3)
+
+    # Load pretrained weights if resuming
+    if args.resume:
+        if not os.path.exists(args.resume):
+            print(f"{args.resume} does not exist.")
+            print(f"It should be in {saved_folder}/CLFxx.pth")
+            exit(1)
+
+        func.load_state_dict(torch.load(args.resume))
+        print(f"Loaded pretrained weights from {args.resume}")
+        filename = os.path.basename(args.resume)
+        # Check train_counter
+        train_counter = int(os.path.basename(os.path.dirname(args.resume)))
+        assert train_counter == args.train_counter
+        # Set test_count
+        test_count = int(''.join(filter(str.isdigit, filename.split('.')[0])))
 
     test_loss = torch.tensor([0]).to(device)
     tt = torch.tensor([0.0, 0.1]).to(device)
