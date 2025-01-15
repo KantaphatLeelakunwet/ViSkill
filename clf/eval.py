@@ -98,12 +98,32 @@ with torch.no_grad():
             [pred_x, pred[-1, :, :].unsqueeze(0)], dim=0)
         x0 = pred[-1, :, :]
 
-        loss = torch.sum((x0 - x_test[i + 1]) ** 2)
-        total_loss.append(loss.cpu().item())
+        # loss = torch.sum((x0 - x_test[i + 1]) ** 2)
+        # total_loss.append(loss.cpu().item())
         # Display loss
-        print(f'timestep: {i:02d} | loss: {loss.item()}')
+        # print(f'timestep: {i:02d} | loss: {loss.item()}')
 
+    x_test1 = x_test.clone()
 
-# Print total loss
-print('total loss:   ', np.sum(total_loss))
-print('Average loss: ', np.mean(total_loss))
+    while True:
+        diff = x_test[:-1, :, :] - x_test[1:, :, :]
+
+        mask_greater = diff > np.pi
+        if mask_greater.any():
+            x_test[1:, :, :] = torch.where(
+                mask_greater,
+                x_test[1:, :, :] + 2 * np.pi,
+                x_test[1:, :, :])
+
+        mask_lesser = diff < -np.pi
+        if mask_lesser.any():
+            x_test[1:, :, :] = torch.where(
+                mask_lesser,
+                x_test[1:, :, :] - 2 * np.pi,
+                x_test[1:, :, :])
+
+        if mask_greater.any() == False and mask_lesser.any() == False:
+            break
+
+    loss = torch.nn.functional.mse_loss(pred_x, x_test)
+    print('Trajectory loss: ', loss)

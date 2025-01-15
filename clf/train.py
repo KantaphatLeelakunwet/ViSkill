@@ -44,7 +44,7 @@ if args.task == 'BiPegBoard-v0':
     acs[:, :, 1] *= np.deg2rad(30)
 else:
     acs *= np.deg2rad(30)
-    
+
 if args.psm == 1:
     obs = obs[:, :, :3]
     acs = acs[:, :, 0].reshape(num_episode, data_size, 1)
@@ -203,28 +203,30 @@ if __name__ == '__main__':
                 x0 = pred[-1, :, :, :]
 
             # NOTE: Orientation lies between [-pi, pi]
-            #       Let's say changing from 0.99 pi to -0.99 pi 
+            #       Let's say changing from 0.99 pi to -0.99 pi
             #       is actually 0.02 pi of difference. However, if you
             #       directly compute the difference, it turns out to be 1.98 pi.
             #       Hence, we should do some modification to target value (-0.99 in this case)
             #       such that we can get the difference of 0.02 pi.
             # NOTE: Once a value is changed, every value after that must also be changed.
-            
+
             while True:
                 diff = batch_x[:-1, :, :, :] - batch_x[1:, :, :, :]
-                
+
                 mask_greater = diff > np.pi
                 if mask_greater.any():
-                    batch_x[1:, :, :, :] = torch.where(mask_greater, 
-                                                batch_x[1:, :, :, :] + 2 * np.pi, 
-                                                batch_x[1:, :, :, :])
-                
+                    batch_x[1:, :, :, :] = torch.where(mask_greater,
+                                                       batch_x[1:, :, :,
+                                                               :] + 2 * np.pi,
+                                                       batch_x[1:, :, :, :])
+
                 mask_lesser = diff < -np.pi
                 if mask_lesser.any():
-                    batch_x[1:, :, :, :] = torch.where(mask_lesser, 
-                                                batch_x[1:, :, :, :] - 2 * np.pi, 
-                                                batch_x[1:, :, :, :])
-            
+                    batch_x[1:, :, :, :] = torch.where(mask_lesser,
+                                                       batch_x[1:, :, :,
+                                                               :] - 2 * np.pi,
+                                                       batch_x[1:, :, :, :])
+
                 if mask_greater.any() == False and mask_lesser.any() == False:
                     break
 
@@ -262,7 +264,26 @@ if __name__ == '__main__':
                     # Update input
                     x0 = pred[-1, :, :]
 
-                # [data_size+1, 1, 6]
+                while True:
+                    diff = x_test[:-1, :, :] - x_test[1:, :, :]
+
+                    mask_greater = diff > np.pi
+                    if mask_greater.any():
+                        x_test[1:, :, :] = torch.where(
+                            mask_greater,
+                            x_test[1:, :, :] + 2 * np.pi,
+                            x_test[1:, :, :])
+
+                    mask_lesser = diff < -np.pi
+                    if mask_lesser.any():
+                        x_test[1:, :, :] = torch.where(
+                            mask_lesser,
+                            x_test[1:, :, :] - 2 * np.pi,
+                            x_test[1:, :, :])
+
+                    if mask_greater.any() == False and mask_lesser.any() == False:
+                        break
+
                 test_loss = torch.mean(torch.abs(pred_x - x_test))
 
                 # Display info
