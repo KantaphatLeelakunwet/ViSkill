@@ -140,9 +140,8 @@ def makedirs(task: str, subtask: str, train_counter: int):
 
 if __name__ == '__main__':
     test_count = 0
-    train_counter = args.train_counter
 
-    saved_folder = makedirs(args.task, args.subtask, train_counter)
+    saved_folder = makedirs(args.task, args.subtask, args.train_counter)
     print(f"Weights will be saved at {saved_folder}")
 
     # Set up the dimension of the network
@@ -164,8 +163,9 @@ if __name__ == '__main__':
         func.load_state_dict(torch.load(args.resume))
         print(f"Loaded pretrained weights from {args.resume}")
         filename = os.path.basename(args.resume)
-        # Set train_counter based on the existing saved models
+        # Check if train_counter are the same as args
         train_counter = int(os.path.basename(os.path.dirname(args.resume)))
+        assert train_counter == args.train_counter
         # Set test_count
         test_count = int(''.join(filter(str.isdigit, filename.split('.')[0])))
 
