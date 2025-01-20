@@ -132,9 +132,6 @@ class SkillChainingTrainer(SkillLearningTrainer):
                     'score': score,
                 }, self.model_dir, filename)
                 self.termlog.info(f'Save checkpoint to {os.path.join(self.model_dir, filename)}')
-                
-                if self.global_episode == 96:
-                    exit(0)
 
     def _train_episode(self, log_every_episodes, seed_until_steps):
         # sync network parameters across workers
