@@ -40,5 +40,5 @@ def create_video_from_images(image_folder, video_name, fps=30):
 if __name__ == "__main__":
     fps = 10  # Frames per second
     image_folder = f'./saved_eval_pic/'
-    video_name = image_folder + "video.mp4" # 'output_video.mp4'  # Desired output video name
+    video_name = image_folder + f"{sys.argv[1]}.mp4" # 'output_video.mp4'  # Desired output video name
     create_video_from_images(image_folder, video_name, fps)

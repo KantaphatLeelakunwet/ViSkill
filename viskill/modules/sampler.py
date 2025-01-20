@@ -1,6 +1,8 @@
 from ..utils.general_utils import AttrDict, listdict2dictlist
 from ..utils.rl_utils import ReplayCache, ReplayCacheGT
 import PIL.Image as Image
+from mpi4py import MPI
+import numpy as np
 import os
 
 
@@ -22,7 +24,7 @@ class Sampler:
     def sample_action(self, obs, is_train):
         return self._agent.get_action(obs, noise=is_train)
     
-    def sample_episode(self, is_train, render=False):
+    def sample_episode(self, is_train, eval_ep=None, glob_ep=None, render=False):
         """Samples one episode from the environment."""
         self.init()
         episode, done = [], False
@@ -74,12 +76,13 @@ class HierarchicalSampler(Sampler):
         self._episode_cache = AttrDict(
             {subtask: ReplayCache(steps) for subtask, steps in env_params.subtask_steps.items()})
     
-    def sample_episode(self, is_train, render=False):
+    def sample_episode(self, is_train, eval_ep=None, glob_ep=None, render=False):
         """Samples one episode from the environment."""
         self.init()
         sc_transitions = AttrDict({subtask: [] for subtask in self._env_params.subtasks})
         sc_succ_transitions = AttrDict({subtask: [] for subtask in self._env_params.subtasks})
         sc_episode, sl_episode, done, prev_subtask_succ = [], AttrDict(), False, AttrDict()
+        images = []
         while not done and self._episode_step < self._max_episode_len:
             agent_output = self.sample_action(self._obs, is_train, self._env.subtask)
             if self.last_sc_action is None:
@@ -87,10 +90,11 @@ class HierarchicalSampler(Sampler):
 
             if render:
                 render_obs = self._env.render('rgb_array')
-                img = Image.fromarray(render_obs)
-                if not os.path.exists(f'saved_eval_pic/'):
-                    os.makedirs(f'saved_eval_pic/')
-                img.save(f'saved_eval_pic/image_{self._episode_step:03}.png')
+                images.append(render_obs)
+                # img = Image.fromarray(render_obs)
+                # if not os.path.exists(f'saved_eval_pic/'):
+                #     os.makedirs(f'saved_eval_pic/')
+                # img.save(f'saved_eval_pic/image_{self._episode_step:03}.png')
             if agent_output.is_sc_step:
                 self.last_sc_action = agent_output.sc_action
                 self.reward_since_last_sc = 0
@@ -139,6 +143,10 @@ class HierarchicalSampler(Sampler):
             self._obs = obs
             self._episode_step += 1
 
+        if render:
+            images = np.array(images)
+            np.save(f"images/glob_{glob_ep}_ep{eval_ep}_rank{MPI.COMM_WORLD.Get_rank()}.npy", arr=images)
+        
         assert self._episode_step == self._max_episode_len
         for subtask in self._env_params.subtasks:
             if subtask not in prev_subtask_succ.keys():

@@ -135,7 +135,7 @@ run/
 exp/
 
 # Datasets
-data/
+data/*
 !data/data_processing.py
 
 # CBF/CLF trained weights
@@ -144,3 +144,5 @@ saved_model/
 # Picture/Video
 saved_eval_pic/
 video/
+images/*
+!images/video.py

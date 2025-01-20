@@ -174,8 +174,8 @@ class SkillLearningTrainer(BaseTrainer):
     def eval(self):
         '''Eval agent.'''
         eval_rollout_storage = RolloutStorage()
-        for _ in range(self.cfg.n_eval_episodes):
-            episode, _, env_steps = self.eval_sampler.sample_episode(is_train=False, render=True)
+        for eval_ep in range(self.cfg.n_eval_episodes):
+            episode, _, env_steps = self.eval_sampler.sample_episode(is_train=False, render=True, eval_ep=eval_ep, glob_ep=self.global_episode)
             eval_rollout_storage.append(episode)
         rollout_status = eval_rollout_storage.rollout_stats()
         if self.use_multiple_workers:
