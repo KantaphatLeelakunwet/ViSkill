@@ -3,19 +3,46 @@ from ..utils.rl_utils import ReplayCache, ReplayCacheGT
 import PIL.Image as Image
 from mpi4py import MPI
 import numpy as np
+import torch
 import os
+
+from cbf.cbf import CBF
+from clf.clf import CLF
+from surrol.utils.pybullet_utils import (
+    get_link_pose,
+)
+from torchdiffeq import odeint
 
 
 class Sampler:
     """Collects rollouts from the environment using the given agent."""
-    def __init__(self, env, agent, max_episode_len):
+    def __init__(self, env, agent, max_episode_len, config):
         self._env = env
         self._agent = agent
         self._max_episode_len = max_episode_len
+        self.cfg = config
 
         self._obs = None
         self._episode_step = 0
         self._episode_cache = ReplayCacheGT(max_episode_len)
+        
+        self.device = torch.device(
+            'cuda:' + str(0)
+            if torch.cuda.is_available() else 'cpu'
+        )
+        
+        self.CBF = CBF([6, 64, 42]).to(self.device)
+        self.CBF.load_state_dict(torch.load(
+            f"./cbf/saved_model/{self.cfg.task[0:-1]}0/combined/0/CBF10.pth"))
+        self.CBF.eval()
+        
+        self.CLF = CLF([6, 64, 18]).to(self.device)
+        self.CLF.load_state_dict(torch.load(
+            f"./clf/saved_model/{self.cfg.task[0:-1]}0/combined/0/CLF10.pth"))
+        self.CLF.eval()
+
+        self.dcbf_constraint_type = int(self.cfg.task[-1])
+        print(f'Constraint type is {self.dcbf_constraint_type}')
 
     def init(self):
         """Starts a new rollout. Render indicates whether output should contain image."""
@@ -28,16 +55,151 @@ class Sampler:
         """Samples one episode from the environment."""
         self.init()
         episode, done = [], False
+        tt = torch.tensor([0., 0.1]).to(self.device)
+        num_violations = 0
         while not done and self._episode_step < self._max_episode_len:
             action = self.sample_action(self._obs, is_train)
+            
             if action is None:
                 break
+            
             if render:
                 render_obs = self._env.render('rgb_array')
                 img = Image.fromarray(render_obs)
                 if not os.path.exists(f'saved_eval_pic/'):
                     os.makedirs(f'saved_eval_pic/')
                 img.save(f'saved_eval_pic/image_{self._episode_step:03}.png')
+            
+            
+            # ===================== constraint test =====================
+            # Display whether the tip of the psm has touch the obstacle or not
+            # True : Collide
+            # False: Safe
+            violate_constraint = False
+            
+            if self.dcbf_constraint_type == 1:
+                # sphere constraint
+                # load the constraint center from the env
+                radius = 0.05
+                constraint_center, _ = get_link_pose(self._env.obj_ids['obstacle'][0], -1)
+                violate_constraint = self.CBF.constraint_valid(constraint_type=self.dcbf_constraint_type,
+                                                               robot=self._obs['observation'][[0, 1, 2, 7, 8, 9]],
+                                                               constraint_center=constraint_center,
+                                                               radius=radius)
+            if violate_constraint:
+                num_violations += 1
+                print(f'Episode {eval_ep:02}: warning: violate the constraint at episode step {self._episode_step}')
+                
+                
+            # ===================== CBF =====================
+            # Modify action to satisfy no-collision constraint
+            if self.cfg.use_dcbf and self.dcbf_constraint_type != 0:
+                with torch.no_grad():
+                    x0 = torch.tensor(
+                        self._obs['observation'][[0, 1, 2, 7, 8, 9]]).unsqueeze(0).to(self.device).float()
+
+                    u0 = 0.05 * \
+                        torch.tensor(action[[0, 1, 2, 5, 6, 7]]).unsqueeze(0).to(self.device).float()
+
+                    x_dim = x0.shape[-1]
+                    
+                    cbf_out = self.CBF.net(x0)
+
+                    fx = cbf_out[:, :x_dim]
+                    gx = cbf_out[:, x_dim:]
+
+                    if self.dcbf_constraint_type == 1:
+                        modified_action = self.CBF.dCBF_sphere(x0, u0, fx, gx, constraint_center, radius)
+
+                    # Check if action is modified by CBF
+                    if (modified_action.cpu().numpy() == 0.05 * action[[0, 1, 2, 5, 6, 7]]).all():
+                        isModified = False
+                    else:
+                        isModified = True
+                    
+                    # Remember to scale back the action before input into gym environment
+                    action[[0, 1, 2, 5, 6, 7]] = modified_action.cpu().numpy() / 0.05
+            
+            
+            # ===================== CLF =====================            
+        
+            if self.cfg.use_dclf and self.dcbf_constraint_type != 0 and isModified:
+                assert self.cfg.use_dcbf
+                with torch.no_grad():
+                    # predicted next position given the modified action
+                    self.CBF.u = modified_action
+                    pred_next_position = odeint(self.CBF, x0, tt)[1, :, :]
+
+                # ------------ Get desired orientation ------------
+                # Use predicted next position and the critic to get the desired orientation
+
+                # Get initial guess for orientation
+                with torch.no_grad():
+                    orn_x0 = torch.tensor(
+                        self._obs['observation'][[3, 4, 5, 10, 11, 12]]).unsqueeze(0).to(self.device).float()
+                    self.CLF.u = torch.tensor(action[[3, 8]].reshape(1, 2)).to(self.device).float()
+                    update_orn = odeint(self.CLF, orn_x0, tt)[1, 0, :]
+
+                for _ in range(10):
+                    o = torch.tensor(self._obs['observation']).reshape(1, -1).cuda().float()
+                    g = torch.tensor(self._obs['desired_goal']).reshape(1, -1).cuda().float()
+                    o[:, [0, 1, 2, 7, 8, 9]] = pred_next_position
+                    update_orn.requires_grad = True
+                    o[:, [3, 4, 5, 10, 11, 12]] = update_orn
+
+                    # Calculate gradient of the critic with respect to the orientation
+                    input_tensor = self._agent._preproc_inputs(o, g, device='cuda')
+                    predicted_next_action = self._agent.actor(input_tensor)
+                    value = self._agent.critic_target(input_tensor, predicted_next_action)
+                    value.backward()
+
+                    update_grad = update_orn.grad.clone().detach()
+
+                    # update the orientation with the gradient
+                    step_size = 0.001
+                    with torch.no_grad():
+                        updated_orn = update_orn+update_grad*step_size
+
+                    # test the updated orn
+                    with torch.no_grad():
+                        o[:, 3:6] = updated_orn
+                        input_tensor = self._agent._preproc_inputs(o, g, device='cuda')
+                        predicted_next_action = self._agent.actor(input_tensor)
+                        value_new = self._agent.critic_target(input_tensor, predicted_next_action)
+                        if value_new.item() > value.item():
+                            update_orn = updated_orn.clone().detach()
+                        else:
+                            break
+                desired_orn = update_orn.clone().detach().unsqueeze(0)
+                
+                # ------------use desired orientation------------
+                with torch.no_grad():
+                    orn_x0 = torch.tensor(
+                        self._obs['observation'][[3, 4, 5, 10, 11, 12]]).unsqueeze(0).to(self.device).float()
+
+                    if self.cfg.task[:-3] == "BiPegBoard":
+                        orn_u0 = torch.tensor(action[[3, 8]]).unsqueeze(0).to(self.device).float()
+                        orn_u0[:, 0] *= np.deg2rad(15)
+                        orn_u0[:, 1] *= np.deg2rad(30)
+                    else: # BiPegTransfer only!
+                        orn_u0 = np.deg2rad(30) * \
+                            torch.tensor(action[[3, 8]]).unsqueeze(0).to(self.device).float()
+                    
+                    clf_out = self.CLF.net(orn_x0)
+
+                    fx = clf_out[:, :6]
+                    gx = clf_out[:, 6:]
+
+                    modified_orn = self.CLF.dCLF(orn_x0, desired_orn, orn_u0, fx, gx)
+
+                    # Remember to scale back the action before input into gym environment
+                    if self.cfg.task[:-3] == "BiPegBoard":
+                        action[3] = modified_orn[0].cpu().numpy() / np.deg2rad(15)
+                        action[8] = modified_orn[1].cpu().numpy() / np.deg2rad(30)
+                    else:
+                        action[[3, 8]] = modified_orn.cpu().numpy() / np.deg2rad(30)
+            
+            
             obs, reward, done, info = self._env.step(action)
             episode.append(AttrDict(
                 reward=reward,
@@ -69,8 +231,8 @@ class Sampler:
 
 class HierarchicalSampler(Sampler):
     """Collects experience batches by rolling out a hierarchical agent. Aggregates low-level batches into HL batch."""
-    def __init__(self, env, agent, env_params):
-        super().__init__(env, agent, env_params['max_timesteps'])
+    def __init__(self, env, agent, env_params, config):
+        super().__init__(env, agent, env_params['max_timesteps'], config)
 
         self._env_params = env_params
         self._episode_cache = AttrDict(

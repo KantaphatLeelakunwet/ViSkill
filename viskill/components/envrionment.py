@@ -483,12 +483,12 @@ class MatchBoardSCWrapper(MatchBoardSLWrapper, BiPegTransferSCWrapper):
 #-----------------------------Make envrionment-----------------------------
 def make_env(cfg):
     env = gym.make(cfg.task)
-    if cfg.task == 'BiPegTransfer-v0':
+    if cfg.task[:-3] == 'BiPegTransfer':
         if cfg.skill_chaining:
             env = BiPegTransferSCWrapper(env, cfg.init_subtask, output_raw_obs=False)
         else:
             env = BiPegTransferSLWrapper(env, cfg.subtask, output_raw_obs=False)
-    elif cfg.task == 'BiPegBoard-v0':
+    elif cfg.task[:-3] == 'BiPegBoard':
         if cfg.skill_chaining:
             env = BiPegBoardSCWrapper(env, cfg.init_subtask, output_raw_obs=False)
         else:

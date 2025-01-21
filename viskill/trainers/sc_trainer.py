@@ -59,8 +59,8 @@ class SkillChainingTrainer(SkillLearningTrainer):
         self.agent = make_hier_agent(self.env_params, self.sl_buffer_samplers, self.cfg)
 
     def _setup_sampler(self):
-        self.train_sampler = HierarchicalSampler(self.train_env, self.agent, self.env_params)
-        self.eval_sampler = HierarchicalSampler(self.eval_env, self.agent, self.env_params)
+        self.train_sampler = HierarchicalSampler(self.train_env, self.agent, self.env_params, self.cfg)
+        self.eval_sampler = HierarchicalSampler(self.eval_env, self.agent, self.env_params, self.cfg)
 
     def _setup_logger(self):
         if self.is_chef:
