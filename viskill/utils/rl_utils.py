@@ -106,7 +106,7 @@ def init_demo_buffer(cfg, buffer, agent, subtask=None, update_normalizer=True):
     demo_path = f'/bd_{current_node}/users/kleelakunwet/demo'
     # demo_path = os.path.join(os.getcwd(),'SurRoL/surrol/data/demo')
     file_name = "data_"
-    file_name += cfg.task
+    file_name += cfg.task[:-1] + '0'
     file_name += "_" + 'random'
     if subtask is None:
         file_name += "_" + str(cfg.num_demo) + '_primitive_new' + cfg.subtask
@@ -141,7 +141,7 @@ def init_sc_buffer(cfg, buffer, agent, env_params):
         demo_path = f'/bd_{current_node}/users/kleelakunwet/demo'
         # demo_path = os.path.join(os.getcwd(),'SurRoL/surrol/data/demo')
         file_name = "data_"
-        file_name += cfg.task
+        file_name += cfg.task[:-1] + '0'
         file_name += "_" + 'random'
         file_name += "_" + str(cfg.num_demo) + '_primitive_new' + subtask
         file_name += ".npz"
