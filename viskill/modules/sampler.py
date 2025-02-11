@@ -1,10 +1,8 @@
 from ..utils.general_utils import AttrDict, listdict2dictlist
 from ..utils.rl_utils import ReplayCache, ReplayCacheGT
-import PIL.Image as Image
 from mpi4py import MPI
 import numpy as np
 import torch
-import os
 
 from cbf.cbf import CBF
 from clf.clf import CLF
@@ -12,6 +10,7 @@ from surrol.utils.pybullet_utils import (
     get_link_pose,
 )
 from torchdiffeq import odeint
+from scipy.spatial.transform import Rotation
 
 
 class Sampler:
@@ -55,6 +54,7 @@ class Sampler:
         """Samples one episode from the environment."""
         self.init()
         episode, done = [], False
+        images = []
         tt = torch.tensor([0., 0.1]).to(self.device)
         num_violations = 0
         while not done and self._episode_step < self._max_episode_len:
@@ -64,11 +64,13 @@ class Sampler:
                 break
             
             if render:
-                render_obs = self._env.render('rgb_array')
-                img = Image.fromarray(render_obs)
-                if not os.path.exists(f'saved_eval_pic/'):
-                    os.makedirs(f'saved_eval_pic/')
-                img.save(f'saved_eval_pic/image_{self._episode_step:03}.png')
+                if self.cfg.render_three_views:
+                    front_rgb_array, right_rgb_array, top_rgb_array = self._env.render_three_views('rgb_array')
+                    render_obs = np.concatenate([front_rgb_array, right_rgb_array, top_rgb_array], axis=1)
+                else:
+                    render_obs = self._env.render('rgb_array')
+
+                images.append(render_obs)
             
             
             # ===================== constraint test =====================
@@ -78,8 +80,7 @@ class Sampler:
             violate_constraint = False
             
             if self.dcbf_constraint_type == 1:
-                # sphere constraint
-                # load the constraint center from the env
+                # Sphere constraint
                 radius = 0.05
                 constraint_center, _ = get_link_pose(self._env.obj_ids['obstacle'][0], -1)
                 violate_constraint = self.CBF.constraint_valid(constraint_type=self.dcbf_constraint_type,
@@ -162,7 +163,7 @@ class Sampler:
 
                     # test the updated orn
                     with torch.no_grad():
-                        o[:, 3:6] = updated_orn
+                        o[:, [3, 4, 5, 10, 11, 12]] = updated_orn
                         input_tensor = self._agent._preproc_inputs(o, g, device='cuda')
                         predicted_next_action = self._agent.actor(input_tensor)
                         value_new = self._agent.critic_target(input_tensor, predicted_next_action)
@@ -214,6 +215,10 @@ class Sampler:
             self._obs = obs
             self._episode_step += 1
 
+        if render:
+            images = np.array(images)
+            np.save(f"images/glob_{glob_ep}_ep{eval_ep}_rank{MPI.COMM_WORLD.Get_rank()}.npy", arr=images)
+            
         episode[-1].done = True     # make sure episode is marked as done at final time step
         rollouts = self._episode_cache.pop()
         assert self._episode_step == self._max_episode_len
@@ -245,23 +250,210 @@ class HierarchicalSampler(Sampler):
         sc_succ_transitions = AttrDict({subtask: [] for subtask in self._env_params.subtasks})
         sc_episode, sl_episode, done, prev_subtask_succ = [], AttrDict(), False, AttrDict()
         images = []
+        tt = torch.tensor([0., 0.1]).to(self.device)
+        num_violations = 0
         while not done and self._episode_step < self._max_episode_len:
             agent_output = self.sample_action(self._obs, is_train, self._env.subtask)
             if self.last_sc_action is None:
                 self._episode_cache[self._env.subtask].store_obs(self._obs)
 
             if render:
-                render_obs = self._env.render('rgb_array')
+                if self.cfg.render_three_views:
+                    front_rgb_array, right_rgb_array, top_rgb_array = self._env.render_three_views('rgb_array')
+                    render_obs = np.concatenate([front_rgb_array, right_rgb_array, top_rgb_array], axis=1)
+                else:
+                    render_obs = self._env.render('rgb_array')
+                    
                 images.append(render_obs)
-                # img = Image.fromarray(render_obs)
-                # if not os.path.exists(f'saved_eval_pic/'):
-                #     os.makedirs(f'saved_eval_pic/')
-                # img.save(f'saved_eval_pic/image_{self._episode_step:03}.png')
+                
             if agent_output.is_sc_step:
                 self.last_sc_action = agent_output.sc_action
                 self.reward_since_last_sc = 0
 
-            obs, reward, done, info = self._env.step(agent_output.sl_action)
+            # ===================== constraint test =====================
+            # Display whether the tip of the psm has touch the obstacle or not
+            # True : Collide
+            # False: Safe
+            violate_constraint = False
+            
+            if self.dcbf_constraint_type == 1:
+                # Sphere constraint
+                radius = 0.05
+                constraint_center, _ = get_link_pose(self._env.obj_ids['obstacle'][0], -1)
+                violate_constraint = self.CBF.constraint_valid(constraint_type=self.dcbf_constraint_type,
+                                                               robot=self._obs['observation'][[0, 1, 2, 7, 8, 9]],
+                                                               constraint_center=constraint_center,
+                                                               radius=radius)
+            elif self.dcbf_constraint_type == 2:
+                # Cylinder constraint
+                center, cylinder_ori = get_link_pose(self._env.obj_ids['obstacle'][0], -1)
+                cylinder_length = 0.05 * 5.
+                radius = 0.018 * 5.
+                rot_matrix = Rotation.from_quat(np.array(cylinder_ori)).as_matrix()
+                original_ori_vector = np.array([0, 0, 1]).reshape([3, 1])
+                current_ori_vector = (rot_matrix @ original_ori_vector).reshape(-1).tolist()
+                
+                psm1 = self._obs['observation'][0:3]
+                psm1_proj_vec = np.dot(current_ori_vector, np.array(psm1) - np.array(center))
+                
+                if psm1_proj_vec ** 2 < (cylinder_length / 2) ** 2:
+                    out = self.CBF.constraint_valid(
+                        constraint_type=self.dcbf_constraint_type,
+                        robot=psm1,
+                        constraint_center=center, 
+                        radius=radius,
+                        ori_vector=current_ori_vector
+                    )
+                    psm1_area = 1 if out else 2
+                else:
+                    psm1_area = 0
+                
+                if self._episode_step != 0:
+                    violate_constraint = (last_psm1_area + psm1_area == 3)
+
+                last_psm1_area = psm1_area
+                
+                psm2 = self._obs['observation'][7:10]
+                psm2_proj_vec = np.dot(current_ori_vector, np.array(psm2) - np.array(center))
+                
+                if psm2_proj_vec ** 2 < (cylinder_length / 2) ** 2:
+                    out = self.CBF.constraint_valid(
+                        constraint_type=self.dcbf_constraint_type,
+                        robot=psm2,
+                        constraint_center=center, 
+                        radius=radius,
+                        ori_vector=current_ori_vector
+                    )
+                    psm2_area = 1 if out else 2
+                else:
+                    psm2_area = 0
+                
+                
+                if self._episode_step != 0:
+                    violate_constraint = True if violate_constraint else (last_psm2_area + psm2_area == 3)
+
+                last_psm2_area = psm2_area
+                
+            if violate_constraint:
+                num_violations += 1
+                print(f'Episode {eval_ep:02}: warning: violate the constraint at episode step {self._episode_step}')
+            
+            # ===================== CBF =====================
+            # Modify action to satisfy no-collision constraint
+            action = agent_output.sl_action
+            
+            if self.cfg.use_dcbf and self.dcbf_constraint_type != 0:
+                with torch.no_grad():
+                    x0 = torch.tensor(
+                        self._obs['observation'][[0, 1, 2, 7, 8, 9]]).unsqueeze(0).to(self.device).float()
+
+                    u0 = 0.05 * \
+                        torch.tensor(action[[0, 1, 2, 5, 6, 7]]).unsqueeze(0).to(self.device).float()
+
+                    x_dim = x0.shape[-1]
+                    
+                    cbf_out = self.CBF.net(x0)
+
+                    fx = cbf_out[:, :x_dim]
+                    gx = cbf_out[:, x_dim:]
+
+                    if self.dcbf_constraint_type == 1:
+                        modified_action = self.CBF.dCBF_sphere(x0, u0, fx, gx, constraint_center, radius)
+                    elif self.dcbf_constraint_type == 2:
+                        if psm1_area + psm2_area > 0:
+                            modified_action = self.CBF.dCBF_cylinder(
+                                x0, u0, fx, gx, current_ori_vector, center, radius, psm1_area, psm2_area)
+                        else:
+                            modified_action = 0.05 * torch.tensor(action[[0, 1, 2, 5, 6, 7]]).to(self.device)
+                    # Check if action is modified by CBF
+                    if (modified_action.cpu().numpy() == 0.05 * action[[0, 1, 2, 5, 6, 7]]).all():
+                        isModified = False
+                    else:
+                        isModified = True
+                    
+                    # Remember to scale back the action before input into gym environment
+                    action[[0, 1, 2, 5, 6, 7]] = modified_action.cpu().numpy() / 0.05
+            
+            # ===================== CLF =====================            
+        
+            if self.cfg.use_dclf and self.dcbf_constraint_type != 0 and isModified:
+                assert self.cfg.use_dcbf
+                with torch.no_grad():
+                    # predicted next position given the modified action
+                    self.CBF.u = modified_action
+                    pred_next_position = odeint(self.CBF, x0, tt)[1, :, :]
+
+                # ------------ Get desired orientation ------------
+                # Use predicted next position and the critic to get the desired orientation
+
+                # Get initial guess for orientation
+                with torch.no_grad():
+                    orn_x0 = torch.tensor(
+                        self._obs['observation'][[3, 4, 5, 10, 11, 12]]).unsqueeze(0).to(self.device).float()
+                    self.CLF.u = torch.tensor(action[[3, 8]].reshape(1, 2)).to(self.device).float()
+                    update_orn = odeint(self.CLF, orn_x0, tt)[1, 0, :]
+
+                for _ in range(10):
+                    o = torch.tensor(self._obs['observation']).reshape(1, -1).cuda().float()
+                    g = torch.tensor(self._obs['desired_goal']).reshape(1, -1).cuda().float()
+                    o[:, [0, 1, 2, 7, 8, 9]] = pred_next_position
+                    update_orn.requires_grad = True
+                    o[:, [3, 4, 5, 10, 11, 12]] = update_orn
+
+                    # Calculate gradient of the critic with respect to the orientation
+                    input_tensor = self._agent.sl_agent[self._env.subtask]._preproc_inputs(o, g, device='cuda')
+                    predicted_next_action = self._agent.sl_agent[self._env.subtask].actor(input_tensor)
+                    value = self._agent.sl_agent[self._env.subtask].critic_target(input_tensor, predicted_next_action)
+                    value.backward()
+
+                    update_grad = update_orn.grad.clone().detach()
+
+                    # update the orientation with the gradient
+                    step_size = 0.001
+                    with torch.no_grad():
+                        updated_orn = update_orn+update_grad*step_size
+
+                    # test the updated orn
+                    with torch.no_grad():
+                        o[:, [3, 4, 5, 10, 11, 12]] = updated_orn
+                        input_tensor = self._agent.sl_agent[self._env.subtask]._preproc_inputs(o, g, device='cuda')
+                        predicted_next_action = self._agent.sl_agent[self._env.subtask].actor(input_tensor)
+                        value_new = self._agent.sl_agent[self._env.subtask].critic_target(input_tensor, predicted_next_action)
+                        if value_new.item() > value.item():
+                            update_orn = updated_orn.clone().detach()
+                        else:
+                            break
+                desired_orn = update_orn.clone().detach().unsqueeze(0)
+                
+                # ------------use desired orientation------------
+                with torch.no_grad():
+                    orn_x0 = torch.tensor(
+                        self._obs['observation'][[3, 4, 5, 10, 11, 12]]).unsqueeze(0).to(self.device).float()
+
+                    if self.cfg.task[:-3] == "BiPegBoard":
+                        orn_u0 = torch.tensor(action[[3, 8]]).unsqueeze(0).to(self.device).float()
+                        orn_u0[:, 0] *= np.deg2rad(15)
+                        orn_u0[:, 1] *= np.deg2rad(30)
+                    else: # BiPegTransfer only!
+                        orn_u0 = np.deg2rad(30) * \
+                            torch.tensor(action[[3, 8]]).unsqueeze(0).to(self.device).float()
+                    
+                    clf_out = self.CLF.net(orn_x0)
+
+                    fx = clf_out[:, :6]
+                    gx = clf_out[:, 6:]
+
+                    modified_orn = self.CLF.dCLF(orn_x0, desired_orn, orn_u0, fx, gx)
+
+                    # Remember to scale back the action before input into gym environment
+                    if self.cfg.task[:-3] == "BiPegBoard":
+                        action[3] = modified_orn[0, 0].cpu().numpy() / np.deg2rad(15)
+                        action[8] = modified_orn[0, 1].cpu().numpy() / np.deg2rad(30)
+                    else:
+                        action[[3, 8]] = modified_orn[0, :].cpu().numpy() / np.deg2rad(30)
+            
+            
+            obs, reward, done, info = self._env.step(action)
             self.reward_since_last_sc += reward
             if info['subtask_done']:
                 if not done:
@@ -294,10 +486,12 @@ class HierarchicalSampler(Sampler):
                 prev_subtask_succ[self._env.subtask] = info['subtask_is_success']
             else:
                 self._episode_cache[self._env.subtask].store_transition(obs, agent_output.sl_action, False)
+            
             sc_episode.append(AttrDict(
                 reward=reward, 
                 success=info['is_success'], 
                 info=info))
+            
             if render:
                 sc_episode[-1].update(AttrDict(image=render_obs))
 

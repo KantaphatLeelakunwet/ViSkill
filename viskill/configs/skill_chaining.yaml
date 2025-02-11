@@ -50,3 +50,5 @@ hydra:
     params:
       num_demo: 200
       seed: 1,2,3,4,5
+
+render_three_views: False

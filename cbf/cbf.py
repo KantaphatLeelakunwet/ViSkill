@@ -51,31 +51,61 @@ class CBF(nn.Module):
             gx = torch.reshape(gx, (self.u_dim, self.x_dim))
             return fx + self.u @ gx  # [1, 6]
 
+    def constraint_valid(self, constraint_type, robot, constraint_center=None, radius=None, 
+                         length=None, point=None, normal_vector=None, ori_vector=None):
+
+        # Sphere constraint
+        if constraint_type == 1:
+            assert constraint_center is not None
+            assert radius is not None
+            assert robot.shape == (6,)
+            
+            constraint_center = np.array(constraint_center)
+            b1 = np.sum((robot[:3] - constraint_center) ** 2) - radius ** 2
+            b2 = np.sum((robot[3:] - constraint_center) ** 2) - radius ** 2
+            violate = (b1 <= 0) or (b2 <= 0)
+        
+        # Cylinder constraint
+        elif constraint_type == 2:
+            assert constraint_center is not None
+            assert ori_vector is not None
+            assert radius is not None
+            assert robot.shape == (3,)
+            
+            robot = np.array(robot)
+            ori_vector = np.array(ori_vector)
+            constraint_center = np.array(constraint_center)
+            
+            proj_vec = np.dot(ori_vector, robot - constraint_center) * ori_vector
+            norm_vec = robot - (constraint_center + proj_vec)
+            violate = (np.sum(norm_vec ** 2) - radius ** 2 >= 0)
+        else:
+            violate = False
+
+        return violate
+
     def dCBF_sphere(self, robot, u, f, g, constraint_center, radius):
         assert robot.shape == (1, self.x_dim)
         assert u.shape == (1, self.u_dim)
         assert f.shape == (1, self.x_dim)
         assert g.shape == (1, self.x_dim * self.u_dim)
-        # assert constraint_center.shape == (1, self.x_dim)
-        # assert len(constraint_center) == 3
+        assert len(constraint_center) == 3
         assert radius > 0
 
         # Convert list to torch.tensor
-        # constraint_center = torch.tensor(
-        #     constraint_center).float().to(self.device)
-        # constraint_center = torch.reshape(constraint_center, (1, self.x_dim))
+        constraint_center = torch.tensor(constraint_center).float().reshape(1, 3).to(self.device)
 
         r = radius
 
         # Compute barrier function
-        b1 = ((robot[:, :3] - constraint_center[:, :3]) ** 2).sum().reshape(1, 1) - r ** 2
-        b2 = ((robot[:, 3:] - constraint_center[:, 3:]) ** 2).sum().reshape(1, 1) - r ** 2
+        b1 = ((robot[:, :3] - constraint_center) ** 2).sum().reshape(1, 1) - r ** 2
+        b2 = ((robot[:, 3:] - constraint_center) ** 2).sum().reshape(1, 1) - r ** 2
         assert b1.shape == b2.shape == (1, 1)
 
         zeros = torch.zeros((1, 3)).to(self.device)
-        db1 = 2 * (robot[:, :3] - constraint_center[:, :3])
+        db1 = 2 * (robot[:, :3] - constraint_center)
         db1 = torch.cat([db1, zeros], dim=1)
-        db2 = 2 * (robot[:, 3:] - constraint_center[:, 3:])
+        db2 = 2 * (robot[:, 3:] - constraint_center)
         db2 = torch.cat([zeros, db2], dim=1)
         assert db1.shape == db2.shape == (1, self.x_dim)
         
@@ -104,6 +134,143 @@ class CBF(nn.Module):
 
         # NOTE: different x from above now
         x = cvx_solver(P.double(), q.double(), G.double(), h.double())
+        
+        out = []
+        for i in range(dim):
+            out.append(x[i])
+        out = np.array(out)
+        out = torch.tensor(out).float().to(self.device)
+        out = out.unsqueeze(0)
+        return out
+
+    def dCBF_cylinder(self, robot, u, f, g, ori_vec, center, radius, psm1_area, psm2_area):
+        assert robot.shape == (1, self.x_dim)
+        assert u.shape == (1, self.u_dim)
+        assert f.shape == (1, self.x_dim)
+        assert g.shape == (1, self.x_dim * self.u_dim)
+        assert len(center) == 3 # List
+        assert len(ori_vec) == 3 # List
+        assert radius > 0
+        
+        # "ori_vec" is a unit vector.
+        
+        # PSM1
+        x1, y1, z1 = robot[0, 0], robot[0, 1], robot[0, 2]
+        # PSM2
+        x2, y2, z2 = robot[0, 3], robot[0, 4], robot[0, 5]
+
+        # Obstacle point position
+        x0, y0, z0 = center
+        # Cylinder orientation vector
+        orix, oriy, oriz = ori_vec
+
+        r = radius
+
+        '''
+        # proj_factor = orix * (x - x0) + oriy * (y - y0) + oriz * (z - z0)
+        # norm_vec_x = x - x0 - (orix * (x - x0) + oriy * (y - y0) + oriz * (z - z0)) * orix
+        # norm_vec_x = x - (x0 + proj_factor * orix)
+        # norm_vec_y = y - y0 - (orix * (x - x0) + oriy * (y - y0) + oriz * (z - z0)) * oriy
+        # norm_vec_z = z - z0 - (orix * (x - x0) + oriy * (y - y0) + oriz * (z - z0)) * oriz
+
+        # Compute barrier function
+        # derivation
+        # b = (x - x0 - (orix * (x - x0) + oriy * (y - y0) + oriz * (z - z0)) * orix) ** 2 +\
+        #     (y - y0 - (orix * (x - x0) + oriy * (y - y0) + oriz * (z - z0)) * oriy) ** 2 +\
+        #     (z - z0 - (orix * (x - x0) + oriy * (y - y0) + oriz * (z - z0)) * oriz) ** 2 - r ** 2
+        # b = ((1 - orix ** 2)(x - x0) - orix * (oriy * (y - y0) + oriz * (z - z0))) ** 2 +\
+        #     ((1 - oriy ** 2)(y - y0) - oriy * (orix * (x - x0) + oriz * (z - z0))) ** 2 +\
+        #     ((1 - oriz ** 2)(z - z0) - oriz * (orix * (x - x0) + oriy * (y - y0))) ** 2 - r ** 2
+        # b = ((1 - orix ** 2)(x - x0) - orix * oriy * (y - y0) - orix * oriz * (z - z0)) ** 2 +\
+        #     (- oriy * orix * (x - x0) + (1 - oriy ** 2)(y - y0) - oriy * oriz * (z - z0)) ** 2 +\
+        #     (- oriz * orix * (x - x0) - oriz * oriy * (y - y0) + (1 - oriz ** 2)(z - z0)) ** 2 - r ** 2
+        '''
+        
+        # Coefficient for norm_vec_x
+        c1x = (1 - orix ** 2)
+        c1y = - orix * oriy
+        c1z = - orix * oriz
+        # Coefficient for norm_vec_y
+        c2x = - oriy * orix
+        c2y = (1 - oriy ** 2)
+        c2z = - oriy * oriz
+        # Coefficient for norm_vec_z
+        c3x = - oriz * orix
+        c3y = - oriz * oriy
+        c3z = (1 - oriz ** 2)
+        
+        b1 = (
+            (c1x * (x1 - x0) + c1y * (y1 - y0) + c1z * (z1 - z0)) ** 2 +
+            (c2x * (x1 - x0) + c2y * (y1 - y0) + c2z * (z1 - z0)) ** 2 +
+            (c3x * (x1 - x0) + c3y * (y1 - y0) + c3z * (z1 - z0)) ** 2 - r ** 2
+        ).clone().detach().reshape(1, 1).to(self.device)
+        
+        b2 = (
+            (c1x * (x2 - x0) + c1y * (y2 - y0) + c1z * (z2 - z0)) ** 2 + \
+            (c2x * (x2 - x0) + c2y * (y2 - y0) + c2z * (z2 - z0)) ** 2 + \
+            (c3x * (x2 - x0) + c3y * (y2 - y0) + c3z * (z2 - z0)) ** 2 - r ** 2
+        ).clone().detach().reshape(1, 1).to(self.device)
+            
+        db1 = torch.tensor([
+            2 * c1x * (c1x * (x1 - x0) + c1y * (y1 - y0) + c1z * (z1 - z0)) +
+            2 * c2x * (c2x * (x1 - x0) + c2y * (y1 - y0) + c2z * (z1 - z0)) +
+            2 * c3x * (c3x * (x1 - x0) + c3y * (y1 - y0) + c3z * (z1 - z0)) ,
+            
+            2 * c1y * (c1x * (x1 - x0) + c1y * (y1 - y0) + c1z * (z1 - z0)) +
+            2 * c2y * (c2x * (x1 - x0) + c2y * (y1 - y0) + c2z * (z1 - z0)) +
+            2 * c3y * (c3x * (x1 - x0) + c3y * (y1 - y0) + c3z * (z1 - z0)) ,
+            
+            2 * c1z * (c1x * (x1 - x0) + c1y * (y1 - y0) + c1z * (z1 - z0)) +
+            2 * c2z * (c2x * (x1 - x0) + c2y * (y1 - y0) + c2z * (z1 - z0)) +
+            2 * c3z * (c3x * (x1 - x0) + c3y * (y1 - y0) + c3z * (z1 - z0)) ,
+            
+            0., 0., 0.
+        ]).unsqueeze(0).to(self.device)
+        
+        db2 = torch.tensor([ 0., 0., 0.,
+            2 * c1x * (c1x * (x1 - x0) + c1y * (y1 - y0) + c1z * (z1 - z0)) +
+            2 * c2x * (c2x * (x1 - x0) + c2y * (y1 - y0) + c2z * (z1 - z0)) +
+            2 * c3x * (c3x * (x1 - x0) + c3y * (y1 - y0) + c3z * (z1 - z0)) ,
+            
+            2 * c1y * (c1x * (x1 - x0) + c1y * (y1 - y0) + c1z * (z1 - z0)) +
+            2 * c2y * (c2x * (x1 - x0) + c2y * (y1 - y0) + c2z * (z1 - z0)) +
+            2 * c3y * (c3x * (x1 - x0) + c3y * (y1 - y0) + c3z * (z1 - z0)) ,
+            
+            2 * c1z * (c1x * (x1 - x0) + c1y * (y1 - y0) + c1z * (z1 - z0)) +
+            2 * c2z * (c2x * (x1 - x0) + c2y * (y1 - y0) + c2z * (z1 - z0)) +
+            2 * c3z * (c3x * (x1 - x0) + c3y * (y1 - y0) + c3z * (z1 - z0))
+        ]).unsqueeze(0).to(self.device)
+        
+        Lfb1 = db1 @ f.T
+        Lfb2 = db2 @ f.T
+        
+        g = torch.reshape(g, (self.u_dim, self.x_dim))
+        Lgb1 = db1 @ g.T
+        Lgb2 = db2 @ g.T
+        
+        Lfb = torch.cat([Lfb1, Lfb2], dim=0)
+        Lgb = torch.cat([Lgb1, Lgb2], dim=0)
+        b = torch.cat([b1, b2], dim=0)
+        
+        gamma = 1
+        A_safe = -Lgb
+        b_safe = Lfb + gamma * b
+        
+        if psm1_area == 2:
+            A_safe[0] = -A_safe[0]
+            b_safe[0] = -b_safe[0]
+        if psm2_area == 2:
+            A_safe[1] = -A_safe[1]
+            b_safe[1] = -b_safe[1]
+
+        dim = self.u_dim
+        G = A_safe.to(self.device)
+        h = b_safe.to(self.device)
+        P = torch.eye(dim).to(self.device)
+        q = -u.T
+
+        # NOTE: different x from above now
+        x = cvx_solver(P.double(), q.double(), G.double(), h.double())
 
         out = []
         for i in range(dim):
@@ -112,6 +279,7 @@ class CBF(nn.Module):
         out = torch.tensor(out).float().to(self.device)
         out = out.unsqueeze(0)
         return out
+
 
     def build_mlp(self, filters, no_act_last_layer=True, activation='gelu'):
         if activation == 'gelu':

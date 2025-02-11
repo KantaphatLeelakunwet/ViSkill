@@ -22,3 +22,4 @@ hydra:
 
 use_dcbf: True
 use_dclf: True
+render_three_views: False

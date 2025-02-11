@@ -2,16 +2,10 @@ import numpy as np
 import cv2
 import sys
 
-# Assuming you have a NumPy array of shape (100, 480, 640, 3)
-# For demonstration, let's create a random array
-num_frames = 100
-height = 480
-width = 640
-channels = 3
-
 # Create a random NumPy array (replace this with your actual data)
 input_filename = sys.argv[1]
 video_array = np.load(input_filename)
+num_frames, height, width, channels = video_array.shape
 
 # Define the codec and create a VideoWriter object for MP4
 output_filename = f'{input_filename[:-4]}.mp4'

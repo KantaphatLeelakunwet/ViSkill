@@ -44,3 +44,5 @@ hydra:
     params:
       seed: 1,2,3,4,5
       subtask: grasp,handover,release
+
+render_three_views: False
