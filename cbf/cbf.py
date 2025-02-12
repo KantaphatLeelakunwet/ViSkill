@@ -51,11 +51,10 @@ class CBF(nn.Module):
             gx = torch.reshape(gx, (self.u_dim, self.x_dim))
             return fx + self.u @ gx  # [1, 6]
 
-    def constraint_valid(self, constraint_type, robot, constraint_center=None, radius=None, 
-                         length=None, point=None, normal_vector=None, ori_vector=None):
+    def constraint_valid(self, constraint_type, robot, constraint_center=None, radius=None, ori_vector=None):
 
         # Sphere constraint
-        if constraint_type == 1:
+        if constraint_type == 'sphere':
             assert constraint_center is not None
             assert radius is not None
             assert robot.shape == (6,)
@@ -66,7 +65,7 @@ class CBF(nn.Module):
             violate = (b1 <= 0) or (b2 <= 0)
         
         # Cylinder constraint
-        elif constraint_type == 2:
+        elif constraint_type == 'cylinder':
             assert constraint_center is not None
             assert ori_vector is not None
             assert radius is not None
@@ -247,7 +246,25 @@ class CBF(nn.Module):
         g = torch.reshape(g, (self.u_dim, self.x_dim))
         Lgb1 = db1 @ g.T
         Lgb2 = db2 @ g.T
-        
+
+        if psm1_area == 0:
+            Lfb1 = torch.empty(0).to(self.device)
+            Lgb1 = torch.empty(0).to(self.device)
+            b1 = torch.empty(0).to(self.device)
+        elif psm1_area == 2:
+            Lfb1 = -Lfb1
+            Lgb1 = -Lgb1
+            b1 = -b1
+
+        if psm2_area == 0:
+            Lfb2 = torch.empty(0).to(self.device)
+            Lgb2 = torch.empty(0).to(self.device)
+            b2 = torch.empty(0).to(self.device)
+        elif psm1_area == 2:
+            Lfb2 = -Lfb2
+            Lgb2 = -Lgb2
+            b2 = -b2
+
         Lfb = torch.cat([Lfb1, Lfb2], dim=0)
         Lgb = torch.cat([Lgb1, Lgb2], dim=0)
         b = torch.cat([b1, b2], dim=0)
@@ -255,13 +272,6 @@ class CBF(nn.Module):
         gamma = 1
         A_safe = -Lgb
         b_safe = Lfb + gamma * b
-        
-        if psm1_area == 2:
-            A_safe[0] = -A_safe[0]
-            b_safe[0] = -b_safe[0]
-        if psm2_area == 2:
-            A_safe[1] = -A_safe[1]
-            b_safe[1] = -b_safe[1]
 
         dim = self.u_dim
         G = A_safe.to(self.device)

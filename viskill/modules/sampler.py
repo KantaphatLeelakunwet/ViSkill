@@ -276,32 +276,32 @@ class HierarchicalSampler(Sampler):
             # False: Safe
             violate_constraint = False
             
-            if self.dcbf_constraint_type == 1:
+            if self.dcbf_constraint_type in {1, 2}:
                 # Sphere constraint
-                radius = 0.05
-                constraint_center, _ = get_link_pose(self._env.obj_ids['obstacle'][0], -1)
-                violate_constraint = self.CBF.constraint_valid(constraint_type=self.dcbf_constraint_type,
+                sphere_radius = 0.05
+                sphere_center, _ = get_link_pose(self._env.obj_ids['obstacle'][0], -1)
+                violate_constraint = self.CBF.constraint_valid(constraint_type='sphere',
                                                                robot=self._obs['observation'][[0, 1, 2, 7, 8, 9]],
-                                                               constraint_center=constraint_center,
-                                                               radius=radius)
-            elif self.dcbf_constraint_type == 2:
+                                                               constraint_center=sphere_center,
+                                                               radius=sphere_radius)
                 # Cylinder constraint
-                center, cylinder_ori = get_link_pose(self._env.obj_ids['obstacle'][0], -1)
+                cylinder_center, cylinder_ori = get_link_pose(self._env.obj_ids['obstacle'][1], -1)
                 cylinder_length = 0.05 * 5.
-                radius = 0.018 * 5.
+                cylinder_radius = 0.018 * 5.
                 rot_matrix = Rotation.from_quat(np.array(cylinder_ori)).as_matrix()
                 original_ori_vector = np.array([0, 0, 1]).reshape([3, 1])
                 current_ori_vector = (rot_matrix @ original_ori_vector).reshape(-1).tolist()
-                
+
+                # psm1
                 psm1 = self._obs['observation'][0:3]
-                psm1_proj_vec = np.dot(current_ori_vector, np.array(psm1) - np.array(center))
+                psm1_proj_vec = np.dot(current_ori_vector, np.array(psm1) - np.array(cylinder_center))
                 
                 if psm1_proj_vec ** 2 < (cylinder_length / 2) ** 2:
                     out = self.CBF.constraint_valid(
-                        constraint_type=self.dcbf_constraint_type,
+                        constraint_type='cylinder',
                         robot=psm1,
-                        constraint_center=center, 
-                        radius=radius,
+                        constraint_center=cylinder_center,
+                        radius=cylinder_radius,
                         ori_vector=current_ori_vector
                     )
                     psm1_area = 1 if out else 2
@@ -309,31 +309,31 @@ class HierarchicalSampler(Sampler):
                     psm1_area = 0
                 
                 if self._episode_step != 0:
-                    violate_constraint = (last_psm1_area + psm1_area == 3)
+                    violate_constraint = violate_constraint or (last_psm1_area + psm1_area == 3)
 
                 last_psm1_area = psm1_area
-                
+
+                # psm2
                 psm2 = self._obs['observation'][7:10]
-                psm2_proj_vec = np.dot(current_ori_vector, np.array(psm2) - np.array(center))
+                psm2_proj_vec = np.dot(current_ori_vector, np.array(psm2) - np.array(cylinder_center))
                 
                 if psm2_proj_vec ** 2 < (cylinder_length / 2) ** 2:
                     out = self.CBF.constraint_valid(
-                        constraint_type=self.dcbf_constraint_type,
+                        constraint_type='cylinder',
                         robot=psm2,
-                        constraint_center=center, 
-                        radius=radius,
+                        constraint_center=cylinder_center,
+                        radius=cylinder_radius,
                         ori_vector=current_ori_vector
                     )
                     psm2_area = 1 if out else 2
                 else:
                     psm2_area = 0
-                
-                
+
                 if self._episode_step != 0:
                     violate_constraint = True if violate_constraint else (last_psm2_area + psm2_area == 3)
 
                 last_psm2_area = psm2_area
-                
+
             if violate_constraint:
                 num_violations += 1
                 print(f'Episode {eval_ep:02}: warning: violate the constraint at episode step {self._episode_step}')
@@ -357,14 +357,12 @@ class HierarchicalSampler(Sampler):
                     fx = cbf_out[:, :x_dim]
                     gx = cbf_out[:, x_dim:]
 
-                    if self.dcbf_constraint_type == 1:
-                        modified_action = self.CBF.dCBF_sphere(x0, u0, fx, gx, constraint_center, radius)
-                    elif self.dcbf_constraint_type == 2:
+                    if self.dcbf_constraint_type in {1, 2}:
+                        modified_action = self.CBF.dCBF_sphere(x0, u0, fx, gx, sphere_center, sphere_radius)
                         if psm1_area + psm2_area > 0:
                             modified_action = self.CBF.dCBF_cylinder(
-                                x0, u0, fx, gx, current_ori_vector, center, radius, psm1_area, psm2_area)
-                        else:
-                            modified_action = 0.05 * torch.tensor(action[[0, 1, 2, 5, 6, 7]]).to(self.device)
+                                x0, modified_action, fx, gx, current_ori_vector, cylinder_center,
+                                cylinder_radius, psm1_area, psm2_area)
                     # Check if action is modified by CBF
                     if (modified_action.cpu().numpy() == 0.05 * action[[0, 1, 2, 5, 6, 7]]).all():
                         isModified = False
