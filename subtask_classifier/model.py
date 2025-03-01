@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 class SubtaskClassifier(nn.Module):
     def __init__(self):
@@ -22,7 +23,7 @@ class SubtaskClassifier(nn.Module):
         # Forward pass to get logits
         logits = self.forward(x)
         # Apply softmax to get probabilities
-        probs = nn.Softmax(logits, dim=1)
+        probs = F.softmax(logits, dim=1)
         # Get the predicted class index
         predicted_class = torch.argmax(probs, dim=1)
         return predicted_class

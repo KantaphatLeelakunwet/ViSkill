@@ -7,6 +7,7 @@ import torch
 from surrol.utils.pybullet_utils import (pairwise_collision,
                                          pairwise_link_collision)
 
+from subtask_classifier.model import SubtaskClassifier
 
 def approx_collision(goal_a, goal_b, th=0.025):
     assert goal_a.shape == goal_b.shape
@@ -80,6 +81,7 @@ class BiPegTransferSLWrapper(SkillLearningWrapper):
         'release': [0, 0]
     }
     LAST_SUBTASK = 'release'
+    
     def __init__(self, env, subtask='grasp', output_raw_obs=False):
         super().__init__(env, subtask, output_raw_obs)
         self.done_subtasks = {key: False for key in self.SUBTASK_STEPS.keys()}
@@ -147,6 +149,7 @@ class BiPegTransferSLWrapper(SkillLearningWrapper):
 
     def _subgoal(self):
         """Output goal of subtask"""
+        # Subgoals are defined in SurRoL/surrol/tasks/<BiPSMTask>
         goal = self.env.subgoals[self.SUBTASK_ORDER[self.subtask]]
         return goal
 
@@ -173,12 +176,24 @@ class BiPegTransferSCWrapper(BiPegTransferSLWrapper):
     '''Wrapper for skill chaining.'''
     MAX_ACTION_RANGE = 4.
     REWARD_SCALE = 30.
+    
+    # def __init__(self, env, subtask='grasp', output_raw_obs=False):
+    #     super().__init__(env, subtask, output_raw_obs)
+    #     self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    #     self.model = SubtaskClassifier().to(self.device)
+    #     self.model.load_state_dict(torch.load("subtask_classifier/BiPegTransfer-v0_weight.pth"))
+    
     def step(self, action):
         next_obs, reward, done, info = self.env.step(action)
         self._elapsed_steps += 1
         next_obs_ = self._replace_goal_with_subgoal(next_obs.copy())
         reward = self.compute_reward(next_obs_['achieved_goal'], next_obs_['desired_goal'])
         info['step'] = 1 - reward
+        # state = np.concatenate([next_obs['observation'][0: 3], next_obs['observation'][7: 10]])
+        # state = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.device)
+        # predicted_subtask = self.model.predict(state)
+        # # print("Predicted Subtask:", predicted_subtask)
+        # done = predicted_subtask > self.SUBTASK_ORDER[self.subtask] or self._elapsed_steps == self.SUBTASK_STEPS[self.subtask]
         done = self._elapsed_steps == self.SUBTASK_STEPS[self.subtask]
         reward = done * reward 
         info['subtask'] = self.subtask
@@ -345,6 +360,13 @@ class BiPegBoardSCWrapper(BiPegTransferSCWrapper, BiPegBoardSLWrapper):
         'handover': 30,
         'release': 60
     }
+    
+    # def __init__(self, env, subtask='grasp', output_raw_obs=False):
+    #     super().__init__(env, subtask, output_raw_obs)
+    #     self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    #     self.model = SubtaskClassifier().to(self.device)
+    #     self.model.load_state_dict(torch.load("subtask_classifier/BiPegBoard-v0_weight.pth"))
+    
 
 
 class MatchBoardSLWrapper(BiPegTransferSLWrapper, SkillLearningWrapper):

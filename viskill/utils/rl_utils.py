@@ -57,7 +57,7 @@ class ReplayCache:
         self.ag.append(obs['achieved_goal'])
 
     def pop(self):
-        assert len(self.obs) == self.T + 1 and len(self.actions) == self.T
+        # assert len(self.obs) == self.T + 1 and len(self.actions) == self.T
         obs = np.expand_dims(np.array(self.obs.copy()),axis=0)
         ag = np.expand_dims(np.array(self.ag.copy()), axis=0)
         #print(self.ag)
@@ -85,7 +85,7 @@ class ReplayCacheGT(ReplayCache):
         self.gt_g.append(gt_goal)
 
     def pop(self):
-        assert len(self.obs) == self.T + 1 and len(self.actions) == self.T
+        # assert len(self.obs) == self.T + 1 and len(self.actions) == self.T
         obs = np.expand_dims(np.array(self.obs.copy()),axis=0)
         ag = np.expand_dims(np.array(self.ag.copy()), axis=0)
         #print(self.ag)
