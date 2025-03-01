@@ -145,7 +145,7 @@ class SkillChainingTrainer(SkillLearningTrainer):
 
         # collect experience and save to buffer
         rollout_storage = RolloutStorage()
-        sc_episode, sl_episode, env_steps = self.train_sampler.sample_episode(is_train=True, render=False)
+        sc_episode, sl_episode, env_steps, _ = self.train_sampler.sample_episode(is_train=True, render=False)
         if self.use_multiple_workers:
             for subtask in sc_episode.sc_transitions.keys():
                 transitions_batch = mpi_gather_experience_transitions(sc_episode.sc_transitions[subtask])
@@ -207,10 +207,28 @@ class SkillChainingTrainer(SkillLearningTrainer):
         )
         
         eval_rollout_storage = RolloutStorage()
+        violations = []
+        not_violate_and_success = []
+        
         for eval_ep in range(self.cfg.n_eval_episodes):
-            episode, _, env_steps = self.eval_sampler.sample_episode(is_train=False, render=True, eval_ep=eval_ep, glob_ep=self.global_episode)
+            episode, _, env_steps, num_violations = self.eval_sampler.sample_episode(is_train=False, render=True, eval_ep=eval_ep, glob_ep=self.global_episode)
             eval_rollout_storage.append(episode)
+            if num_violations > 0:
+                violations.append(1)
+            else:
+                violations.append(0)
+            if num_violations == 0 and episode['success'][-1]:
+                not_violate_and_success.append(1)
+            else:
+                not_violate_and_success.append(0)
         rollout_status = eval_rollout_storage.rollout_stats()
+        
+        # Display average number of violations per episode
+        print(
+            f"Rate of violated episodes: {sum(violations) / len(violations)}")
+        print(
+            f"Rate of successful and no-violation episodes: {sum(not_violate_and_success) / len(not_violate_and_success)}")
+
         if self.use_multiple_workers:
             rollout_status = mpi_gather_experience_rollots(rollout_status)
             for key, value in rollout_status.items():

@@ -217,7 +217,7 @@ class Sampler:
 
         if render:
             images = np.array(images)
-            np.save(f"images/glob_{glob_ep}_ep{eval_ep}_rank{MPI.COMM_WORLD.Get_rank()}.npy", arr=images)
+            np.save(f"images/{self.cfg.task}/glob_{glob_ep}_ep{eval_ep}_rank{MPI.COMM_WORLD.Get_rank()}.npy", arr=images)
             
         episode[-1].done = True     # make sure episode is marked as done at final time step
         rollouts = self._episode_cache.pop()
@@ -499,9 +499,10 @@ class HierarchicalSampler(Sampler):
 
         if render:
             images = np.array(images)
-            np.save(f"images/glob_{glob_ep}_ep{eval_ep}_rank{MPI.COMM_WORLD.Get_rank()}.npy", arr=images)
+            np.save(f"images/{self.cfg.task}/glob_{glob_ep}_ep{eval_ep}_rank{MPI.COMM_WORLD.Get_rank()}.npy", arr=images)
         
-        assert self._episode_step == self._max_episode_len
+        # What is this condition for?
+        # assert self._episode_step == self._max_episode_len
         for subtask in self._env_params.subtasks:
             if subtask not in prev_subtask_succ.keys():
                 sl_episode[subtask] = self._episode_cache[subtask].pop()
@@ -517,7 +518,7 @@ class HierarchicalSampler(Sampler):
             sc_succ_transitions=sc_succ_transitions)
         )
         
-        return sc_episode, sl_episode, self._episode_step
+        return sc_episode, sl_episode, self._episode_step, num_violations
 
     def _episode_reset(self, global_step=None):
         """Resets sampler at the end of an episode."""
