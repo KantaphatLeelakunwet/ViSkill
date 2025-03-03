@@ -52,3 +52,5 @@ hydra:
       seed: 1,2,3,4,5
 
 render_three_views: False
+use_dcbf: False
+use_dclf: False
