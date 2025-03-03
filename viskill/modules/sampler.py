@@ -276,9 +276,9 @@ class HierarchicalSampler(Sampler):
             # False: Safe
             violate_constraint = False
             
-            if self.dcbf_constraint_type in {1, 2}:
+            if self.dcbf_constraint_type in {0, 1, 2}:
                 # Sphere constraint
-                sphere_radius = 0.05
+                sphere_radius = 0.015 * 5.
                 sphere_center, _ = get_link_pose(self._env.obj_ids['obstacle'][0], -1)
                 violate_constraint = self.CBF.constraint_valid(constraint_type='sphere',
                                                                robot=self._obs['observation'][[0, 1, 2, 7, 8, 9]],
@@ -286,8 +286,8 @@ class HierarchicalSampler(Sampler):
                                                                radius=sphere_radius)
                 # Cylinder constraint
                 cylinder_center, cylinder_ori = get_link_pose(self._env.obj_ids['obstacle'][1], -1)
-                cylinder_length = 0.05 * 5.
-                cylinder_radius = 0.018 * 5.
+                cylinder_length = 0.04 * 5.
+                cylinder_radius = 0.01 * 5.
                 rot_matrix = Rotation.from_quat(np.array(cylinder_ori)).as_matrix()
                 original_ori_vector = np.array([0, 0, 1]).reshape([3, 1])
                 current_ori_vector = (rot_matrix @ original_ori_vector).reshape(-1).tolist()
