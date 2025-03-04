@@ -222,7 +222,7 @@ class Sampler:
         episode[-1].done = True     # make sure episode is marked as done at final time step
         rollouts = self._episode_cache.pop()
         assert self._episode_step == self._max_episode_len
-        return listdict2dictlist(episode), rollouts, self._episode_step
+        return listdict2dictlist(episode), rollouts, self._episode_step, num_violations
 
     def _episode_reset(self, global_step=None):
         """Resets sampler at the end of an episode."""
@@ -276,7 +276,7 @@ class HierarchicalSampler(Sampler):
             # False: Safe
             violate_constraint = False
             
-            if self.dcbf_constraint_type in {0, 1, 2}:
+            if self.dcbf_constraint_type in {1, 2}:
                 # Sphere constraint
                 sphere_radius = 0.015 * 5.
                 sphere_center, _ = get_link_pose(self._env.obj_ids['obstacle'][0], -1)
