@@ -338,9 +338,16 @@ class HierarchicalSampler(Sampler):
                 num_violations += 1
                 print(f'Episode {eval_ep:02}: warning: violate the constraint at episode step {self._episode_step}')
             
+            # Get initial model's action
+            action = agent_output.sl_action
+        
+                
+                
+                
+            '''
             # ===================== CBF =====================
             # Modify action to satisfy no-collision constraint
-            action = agent_output.sl_action
+            
             
             if self.cfg.use_dcbf and self.dcbf_constraint_type != 0:
                 with torch.no_grad():
@@ -403,7 +410,7 @@ class HierarchicalSampler(Sampler):
                     predicted_next_action = self._agent.sl_agent[self._env.subtask].actor(input_tensor)
                     value = self._agent.sl_agent[self._env.subtask].critic_target(input_tensor, predicted_next_action)
                     value.backward()
-
+N
                     update_grad = update_orn.grad.clone().detach()
 
                     # update the orientation with the gradient
@@ -450,6 +457,47 @@ class HierarchicalSampler(Sampler):
                     else:
                         action[[3, 8]] = modified_orn[0, :].cpu().numpy() / np.deg2rad(30)
             
+            '''
+            
+            # ===================== NEW CLF ===================== 
+            # Try to use CLF to follow the preset trajectory by minimizing the shortest distance
+            # between two PSM and the corresponding nearest cylinder.
+            # 那现在就是测下用clf去跟随和不用clf下的这个距离，应该就行了           
+        
+            if self.cfg.use_dclf and self.dcbf_constraint_type != 0:
+                
+                with torch.no_grad():
+                    # Current position
+                    x0 = torch.tensor(
+                            self._obs['observation'][[0, 1, 2, 7, 8, 9]]).unsqueeze(0).to(self.device).float()
+                    # Model predicted action
+                    u0 = 0.05 * \
+                        torch.tensor(action[[0, 1, 2, 5, 6, 7]]).unsqueeze(0).to(self.device).float()
+                    
+                    # Predicted next position given the action
+                    self.CBF.u = u0
+                    pred_next_position = odeint(self.CBF, x0, tt)[1, :, :]
+                    
+                    # Get the closest point on the nearest cylinder axis
+                    nearest_cylinder_psm1, nearest_cylinder_psm2 = self._env.nearest_cylinder()
+                    A1, B1 = nearest_cylinder_psm1
+                    A2, B2 = nearest_cylinder_psm2
+                    closest_point_on_axis_1 = self._env.closest_point_on_axis(A1, B1, pred_next_position[:, :3])
+                    closest_point_on_axis_2 = self._env.closest_point_on_axis(A2, B2, pred_next_position[:, 3:])
+                    
+                    target = np.concatenate((closest_point_on_axis_1, closest_point_on_axis_2), axis=0)
+                    target = torch.tensor(target).unsqueeze(0).to(self.device).float()
+                    assert target.shape == (1, 6)
+                    
+                    # Need to get the position dynamics from CBF output
+                    # Not using f and g from CLF because that is for orientation
+                    cbf_out = self.CBF.net(x0)
+                    x_dim = x0.shape[-1]
+                    fx = cbf_out[:, :x_dim]
+                    gx = cbf_out[:, x_dim:]
+                    
+                    modified_action = self.CBF.dCLF(x0, target, u0, fx, gx)
+                    action = modified_action / 0.05
             
             obs, reward, done, info = self._env.step(action)
             self.reward_since_last_sc += reward

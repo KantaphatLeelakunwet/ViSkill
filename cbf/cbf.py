@@ -290,6 +290,53 @@ class CBF(nn.Module):
         out = out.unsqueeze(0)
         return out
 
+    def dCLF(self, robot, desired, u, f, g):
+        # assert robot.shape == (1, 3)
+        # assert desired.shape == (1, 3)
+        # assert u.shape == (1, 1)
+        # assert f.shape == (1, 3)
+        # assert g.shape == (1, 3)
+
+        # Compute CLF
+        V = ((robot - desired) ** 2).sum()
+
+        # Partial derivative
+        dV = 2 * torch.tensor([[
+            robot[0, i] - desired[0, i] for i in range(robot.shape[1])]]).float().to(self.device)
+
+        dotV_f = dV @ f.T  # [1, 1]
+
+        g = torch.reshape(g, (self.u_dim, self.x_dim))
+        dotV_g = dV @ g.T  # [1, 2]
+
+        # dotV + epsilon * V <= 0
+        # (dotV_f + dotV_g * u) + epsilon * V <= 0
+        # dotV_g * u <= -dotV_f - epsilon * V
+        # Gx <= h
+        epsilon = 10.
+        delta = 1.
+        b_safe = -dotV_f - epsilon * V + delta
+        A_safe = dotV_g
+
+        assert A_safe.shape == (1, u.shape[1])
+        assert b_safe.shape == (1, 1)
+
+        dim = u.shape[1]
+        G = A_safe.to(self.device)
+        h = b_safe.to(self.device)
+        P = torch.eye(dim).to(self.device)
+        q = -u.T  # [2, 1]
+
+        # NOTE: different x from above now
+        x = cvx_solver(P.double(), q.double(), G.double(), h.double())
+
+        out = []
+        for i in range(dim):
+            out.append(x[i])
+        out = np.array(out)
+        out = torch.tensor(out).float().to(self.device)
+        out = out.unsqueeze(0)
+        return out  # [1, 2]
 
     def build_mlp(self, filters, no_act_last_layer=True, activation='gelu'):
         if activation == 'gelu':
