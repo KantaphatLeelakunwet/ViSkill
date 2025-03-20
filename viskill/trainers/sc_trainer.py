@@ -145,7 +145,7 @@ class SkillChainingTrainer(SkillLearningTrainer):
 
         # collect experience and save to buffer
         rollout_storage = RolloutStorage()
-        sc_episode, sl_episode, env_steps, _ = self.train_sampler.sample_episode(is_train=True, render=False)
+        sc_episode, sl_episode, env_steps, _, _ = self.train_sampler.sample_episode(is_train=True, render=False)
         if self.use_multiple_workers:
             for subtask in sc_episode.sc_transitions.keys():
                 transitions_batch = mpi_gather_experience_transitions(sc_episode.sc_transitions[subtask])
@@ -209,9 +209,10 @@ class SkillChainingTrainer(SkillLearningTrainer):
         eval_rollout_storage = RolloutStorage()
         violations = []
         not_violate_and_success = []
-        
+        following_dis_list = []
+
         for eval_ep in range(self.cfg.n_eval_episodes):
-            episode, _, env_steps, num_violations = self.eval_sampler.sample_episode(is_train=False, render=True, eval_ep=eval_ep, glob_ep=self.global_episode)
+            episode, _, env_steps, num_violations, following_dis = self.eval_sampler.sample_episode(is_train=False, render=True, eval_ep=eval_ep, glob_ep=self.global_episode)
             eval_rollout_storage.append(episode)
             if num_violations > 0:
                 violations.append(1)
@@ -221,6 +222,7 @@ class SkillChainingTrainer(SkillLearningTrainer):
                 not_violate_and_success.append(1)
             else:
                 not_violate_and_success.append(0)
+            following_dis_list.append(following_dis)
         rollout_status = eval_rollout_storage.rollout_stats()
         
         # Display average number of violations per episode
@@ -228,6 +230,10 @@ class SkillChainingTrainer(SkillLearningTrainer):
             f"Rate of violated episodes: {sum(violations) / len(violations)}")
         print(
             f"Rate of successful and no-violation episodes: {sum(not_violate_and_success) / len(not_violate_and_success)}")
+
+        # Display average following distance per episode
+        print(
+            f"average following distance per episode: {sum(following_dis_list) / len(following_dis_list)}")
 
         if self.use_multiple_workers:
             rollout_status = mpi_gather_experience_rollots(rollout_status)

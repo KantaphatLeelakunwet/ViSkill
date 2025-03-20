@@ -131,7 +131,7 @@ class SkillLearningTrainer(BaseTrainer):
 
         # collect experience
         rollout_storage = RolloutStorage()
-        episode, rollouts, env_steps = self.train_sampler.sample_episode(is_train=True, render=False)
+        episode, rollouts, env_steps, _, _ = self.train_sampler.sample_episode(is_train=True, render=False)
         if self.use_multiple_workers:
             rollouts = mpi_gather_experience_episode(rollouts)
 
@@ -175,7 +175,7 @@ class SkillLearningTrainer(BaseTrainer):
         '''Eval agent.'''
         eval_rollout_storage = RolloutStorage()
         for eval_ep in range(self.cfg.n_eval_episodes):
-            episode, _, env_steps, _ = self.eval_sampler.sample_episode(is_train=False, render=True, eval_ep=eval_ep, glob_ep=self.global_episode)
+            episode, _, env_steps, _, _ = self.eval_sampler.sample_episode(is_train=False, render=True, eval_ep=eval_ep, glob_ep=self.global_episode)
             eval_rollout_storage.append(episode)
         rollout_status = eval_rollout_storage.rollout_stats()
         if self.use_multiple_workers:

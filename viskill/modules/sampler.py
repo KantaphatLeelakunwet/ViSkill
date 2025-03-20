@@ -40,8 +40,8 @@ class Sampler:
             f"./clf/saved_model/{self.cfg.task[0:-1]}0/combined/0/CLF10.pth"))
         self.CLF.eval()
 
-        self.dcbf_constraint_type = int(self.cfg.task[-1])
-        print(f'Constraint type is {self.dcbf_constraint_type}')
+        self.constraint_type = int(self.cfg.task[-1])
+        print(f'Constraint type is {self.constraint_type}')
 
     def init(self):
         """Starts a new rollout. Render indicates whether output should contain image."""
@@ -77,13 +77,15 @@ class Sampler:
             # Display whether the tip of the psm has touch the obstacle or not
             # True : Collide
             # False: Safe
+
+            # For path following, calculate the average distance between the agent pos and the path (cylinder)
             violate_constraint = False
             
-            if self.dcbf_constraint_type == 1:
+            if self.constraint_type == 1:
                 # Sphere constraint
                 radius = 0.05
                 constraint_center, _ = get_link_pose(self._env.obj_ids['obstacle'][0], -1)
-                violate_constraint = self.CBF.constraint_valid(constraint_type=self.dcbf_constraint_type,
+                violate_constraint = self.CBF.constraint_valid(constraint_type=self.constraint_type,
                                                                robot=self._obs['observation'][[0, 1, 2, 7, 8, 9]],
                                                                constraint_center=constraint_center,
                                                                radius=radius)
@@ -94,7 +96,7 @@ class Sampler:
                 
             # ===================== CBF =====================
             # Modify action to satisfy no-collision constraint
-            if self.cfg.use_dcbf and self.dcbf_constraint_type != 0:
+            if self.cfg.use_dcbf and self.constraint_type != 0:
                 with torch.no_grad():
                     x0 = torch.tensor(
                         self._obs['observation'][[0, 1, 2, 7, 8, 9]]).unsqueeze(0).to(self.device).float()
@@ -109,7 +111,7 @@ class Sampler:
                     fx = cbf_out[:, :x_dim]
                     gx = cbf_out[:, x_dim:]
 
-                    if self.dcbf_constraint_type == 1:
+                    if self.constraint_type == 1:
                         modified_action = self.CBF.dCBF_sphere(x0, u0, fx, gx, constraint_center, radius)
 
                     # Check if action is modified by CBF
@@ -124,7 +126,7 @@ class Sampler:
             
             # ===================== CLF =====================            
         
-            if self.cfg.use_dclf and self.dcbf_constraint_type != 0 and isModified:
+            if self.cfg.use_dclf and self.constraint_type != 0 and isModified:
                 assert self.cfg.use_dcbf
                 with torch.no_grad():
                     # predicted next position given the modified action
@@ -252,6 +254,7 @@ class HierarchicalSampler(Sampler):
         images = []
         tt = torch.tensor([0., 0.1]).to(self.device)
         num_violations = 0
+        following_dis = 0
         while not done and self._episode_step < self._max_episode_len:
             agent_output = self.sample_action(self._obs, is_train, self._env.subtask)
             if self.last_sc_action is None:
@@ -271,12 +274,15 @@ class HierarchicalSampler(Sampler):
                 self.reward_since_last_sc = 0
 
             # ===================== constraint test =====================
-            # Display whether the tip of the psm has touch the obstacle or not
+            # For collision avoidance, display whether the tip of the psm has touch the obstacle or not
             # True : Collide
             # False: Safe
+
+            # For path following, calculate the average distance between the agent and the path
             violate_constraint = False
-            
-            if self.dcbf_constraint_type in {1, 2}:
+
+            # collision avoidance
+            if self.constraint_type == 1:
                 # Sphere constraint
                 sphere_radius = 0.015 * 5.
                 sphere_center, _ = get_link_pose(self._env.obj_ids['obstacle'][0], -1)
@@ -337,19 +343,36 @@ class HierarchicalSampler(Sampler):
             if violate_constraint:
                 num_violations += 1
                 print(f'Episode {eval_ep:02}: warning: violate the constraint at episode step {self._episode_step}')
+
+            # path following
+            if self.constraint_type == 2:
+                psm1 = self._obs['observation'][0:3]
+                psm2 = self._obs['observation'][7:10]
+
+                psm_pos = np.concatenate((psm1, psm2), axis=0)
+                assert psm_pos.shape == (6, )
+                # Get the closest point on the nearest cylinder axis
+                nearest_cylinder_psm1, nearest_cylinder_psm2 = self._env.nearest_cylinder()
+                A1, B1 = nearest_cylinder_psm1
+                A2, B2 = nearest_cylinder_psm2
+                closest_point_on_axis_1 = self._env.closest_point_on_axis(A1, B1, psm1)
+                closest_point_on_axis_2 = self._env.closest_point_on_axis(A2, B2, psm2)
+
+                target = np.concatenate((closest_point_on_axis_1, closest_point_on_axis_2), axis=0)
+                assert target.shape == (6, )
+
+                current_following_dis = (np.linalg.norm(psm_pos[:3]-target[:3])+
+                                         np.linalg.norm(psm_pos[3:]-target[3:]))
+                # print(current_following_dis)
+                following_dis += current_following_dis
+
             
             # Get initial model's action
             action = agent_output.sl_action
-        
-                
-                
-                
-            '''
+
             # ===================== CBF =====================
             # Modify action to satisfy no-collision constraint
-            
-            
-            if self.cfg.use_dcbf and self.dcbf_constraint_type != 0:
+            if self.cfg.use_dcbf and self.constraint_type == 1:
                 with torch.no_grad():
                     x0 = torch.tensor(
                         self._obs['observation'][[0, 1, 2, 7, 8, 9]]).unsqueeze(0).to(self.device).float()
@@ -364,7 +387,7 @@ class HierarchicalSampler(Sampler):
                     fx = cbf_out[:, :x_dim]
                     gx = cbf_out[:, x_dim:]
 
-                    if self.dcbf_constraint_type in {1, 2}:
+                    if self.constraint_type == 1:
                         modified_action = self.CBF.dCBF_sphere(x0, u0, fx, gx, sphere_center, sphere_radius)
                         if psm1_area + psm2_area > 0:
                             modified_action = self.CBF.dCBF_cylinder(
@@ -378,10 +401,10 @@ class HierarchicalSampler(Sampler):
                     
                     # Remember to scale back the action before input into gym environment
                     action[[0, 1, 2, 5, 6, 7]] = modified_action.cpu().numpy() / 0.05
-            
+            '''
             # ===================== CLF =====================            
         
-            if self.cfg.use_dclf and self.dcbf_constraint_type != 0 and isModified:
+            if self.cfg.use_dclf and self.constraint_type == 1 and isModified:
                 assert self.cfg.use_dcbf
                 with torch.no_grad():
                     # predicted next position given the modified action
@@ -462,9 +485,8 @@ N
             # ===================== NEW CLF ===================== 
             # Try to use CLF to follow the preset trajectory by minimizing the shortest distance
             # between two PSM and the corresponding nearest cylinder.
-            # 那现在就是测下用clf去跟随和不用clf下的这个距离，应该就行了           
         
-            if self.cfg.use_dclf and self.dcbf_constraint_type != 0:
+            if self.cfg.use_dclf and self.constraint_type == 2:
                 
                 with torch.no_grad():
                     # Current position
@@ -476,14 +498,16 @@ N
                     
                     # Predicted next position given the action
                     self.CBF.u = u0
-                    pred_next_position = odeint(self.CBF, x0, tt)[1, :, :]
+                    pred_next_position = (odeint(self.CBF, x0, tt)[1, :, :]).cpu().numpy()
                     
                     # Get the closest point on the nearest cylinder axis
                     nearest_cylinder_psm1, nearest_cylinder_psm2 = self._env.nearest_cylinder()
                     A1, B1 = nearest_cylinder_psm1
                     A2, B2 = nearest_cylinder_psm2
-                    closest_point_on_axis_1 = self._env.closest_point_on_axis(A1, B1, pred_next_position[:, :3])
-                    closest_point_on_axis_2 = self._env.closest_point_on_axis(A2, B2, pred_next_position[:, 3:])
+                    closest_point_on_axis_1 = self._env.closest_point_on_axis(A1, B1,
+                                                                              pred_next_position[0, :3])
+                    closest_point_on_axis_2 = self._env.closest_point_on_axis(A2, B2,
+                                                                              pred_next_position[0, 3:])
                     
                     target = np.concatenate((closest_point_on_axis_1, closest_point_on_axis_2), axis=0)
                     target = torch.tensor(target).unsqueeze(0).to(self.device).float()
@@ -497,7 +521,8 @@ N
                     gx = cbf_out[:, x_dim:]
                     
                     modified_action = self.CBF.dCLF(x0, target, u0, fx, gx)
-                    action = modified_action / 0.05
+                    action[[0, 1, 2, 5, 6, 7]] = modified_action.cpu().numpy() / 0.05
+                    # action = modified_action / 0.05
             
             obs, reward, done, info = self._env.step(action)
             self.reward_since_last_sc += reward
@@ -565,8 +590,8 @@ N
             sc_transitions=sc_transitions,
             sc_succ_transitions=sc_succ_transitions)
         )
-        
-        return sc_episode, sl_episode, self._episode_step, num_violations
+
+        return sc_episode, sl_episode, self._episode_step, num_violations, following_dis
 
     def _episode_reset(self, global_step=None):
         """Resets sampler at the end of an episode."""
